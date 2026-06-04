@@ -182,32 +182,32 @@ new #[Title('Guess the Cold Start')] class extends Component
 };
 ?>
 
-<div class="mx-auto flex min-h-screen max-w-screen-2xl flex-col gap-6 p-6">
+<div class="mx-auto flex min-h-dvh max-w-screen-2xl flex-col gap-6 p-6 isolate">
     <header class="flex flex-wrap items-end justify-between gap-2">
         <div>
-            <h1 class="text-3xl font-bold tracking-tight">Guess the Cold Start ❄️</h1>
-            <p class="mt-1 text-sm text-zinc-400">Pick a hibernating app, guess its wake-up time in milliseconds, then watch it load. Closest guess wins.</p>
+            <h1 class="text-2xl font-semibold tracking-tight text-balance">Guess the Cold Start ❄️</h1>
+            <p class="mt-1 text-sm text-pretty text-zinc-400">Pick a hibernating app, guess its wake-up time in milliseconds, then watch it load. Closest guess wins.</p>
         </div>
-        <p class="text-xs text-zinc-500">Powered by Laravel Cloud hibernation</p>
+        <p class="font-mono text-xs tracking-wide text-zinc-500 uppercase">Powered by Laravel Cloud hibernation</p>
     </header>
 
     <div class="grid flex-1 grid-cols-12 gap-6">
         {{-- Targets --}}
         <section
-            class="col-span-12 flex flex-col gap-3 rounded-2xl border border-zinc-800 bg-zinc-900/60 p-4 lg:col-span-3"
-            @if (! $roundActive) wire:poll.10s @endif
+            wire:poll.5s
+            class="col-span-12 flex flex-col gap-4 rounded-2xl border border-white/10 bg-zinc-900/50 p-4 lg:col-span-3"
         >
-            <h2 class="text-sm font-semibold tracking-wide text-zinc-400 uppercase">Apps</h2>
+            <h2 class="font-mono text-xs font-medium tracking-wide text-zinc-500 uppercase">Apps</h2>
 
-            <ul class="flex flex-col gap-2">
+            <ul role="list" class="flex flex-col gap-2">
                 @foreach ($this->targets as $target)
                     @php
                         $isSelected = $selectedEnvId === $target['environment_id'];
                         [$label, $badge] = match (true) {
-                            $target['status'] === 'deploying' => ['deploying', 'bg-amber-500/15 text-amber-300 ring-amber-500/40'],
-                            $target['status'] === 'stopped' => ['stopped', 'bg-red-500/15 text-red-300 ring-red-500/40'],
-                            $target['cooldown'] > 0 => ["cooling {$target['cooldown']}s", 'bg-zinc-500/15 text-zinc-400 ring-zinc-500/40'],
-                            default => ['ready', 'bg-sky-500/15 text-sky-300 ring-sky-500/40'],
+                            $target['status'] === 'deploying' => ['deploying', 'bg-amber-400/10 text-amber-300 ring-amber-400/30'],
+                            $target['status'] === 'stopped' => ['stopped', 'bg-red-400/10 text-red-300 ring-red-400/30'],
+                            $target['cooldown'] > 0 => ["cooling {$target['cooldown']}s", 'bg-white/5 text-zinc-400 ring-white/15'],
+                            default => ['ready', 'bg-emerald-400/10 text-emerald-300 ring-emerald-400/30'],
                         };
                     @endphp
 
@@ -216,16 +216,16 @@ new #[Title('Guess the Cold Start')] class extends Component
                             type="button"
                             wire:click="selectTarget('{{ $target['environment_id'] }}')"
                             @disabled($roundActive || ! $target['playable'])
-                            class="flex w-full items-center justify-between gap-2 rounded-xl border px-3 py-3 text-left transition
-                                {{ $isSelected ? 'border-sky-400 bg-sky-500/10' : 'border-zinc-800 bg-zinc-900' }}
-                                {{ $target['playable'] && ! $roundActive ? 'cursor-pointer hover:border-sky-500/60' : 'opacity-50' }}"
+                            class="flex w-full items-center justify-between gap-2 rounded-xl border p-3 text-left text-sm transition
+                                {{ $isSelected ? 'border-sky-400/60 bg-sky-400/10' : 'border-white/10 bg-white/2.5' }}
+                                {{ $target['playable'] && ! $roundActive ? 'cursor-pointer hover:border-sky-400/40 hover:bg-white/5' : 'opacity-40' }}"
                         >
-                            <span class="text-sm font-medium">{{ $target['name'] }}</span>
-                            <span class="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-semibold tracking-wide uppercase ring-1 {{ $badge }}">
+                            <span class="font-medium">{{ $target['name'] }}</span>
+                            <span class="inline-flex items-center gap-1.5 rounded-full py-0.5 font-mono text-[0.6875rem] font-medium tracking-wide uppercase ring-1 tabular-nums {{ $target['playable'] ? 'pr-2 pl-1.5' : 'px-2' }} {{ $badge }}">
                                 @if ($target['playable'])
                                     <span class="relative flex size-1.5">
-                                        <span class="absolute inline-flex size-full animate-ping rounded-full bg-sky-400 opacity-75"></span>
-                                        <span class="relative inline-flex size-1.5 rounded-full bg-sky-400"></span>
+                                        <span class="absolute inline-flex size-full animate-ping rounded-full bg-emerald-400 opacity-75"></span>
+                                        <span class="relative inline-flex size-1.5 rounded-full bg-emerald-400"></span>
                                     </span>
                                 @endif
                                 {{ $label }}
@@ -239,45 +239,47 @@ new #[Title('Guess the Cold Start')] class extends Component
                 <p class="text-sm text-red-400">{{ $message }}</p>
             @enderror
 
-            <p class="mt-auto text-xs text-zinc-600">An app is <span class="text-sky-400">ready</span> once nobody has clicked it for {{ config('game.wake_cooldown') }} seconds — that's how long Laravel Cloud needs to put it back to sleep.</p>
+            <p class="mt-auto text-sm text-pretty text-zinc-500">An app is <span class="text-emerald-400">ready</span> once nobody has clicked it for {{ config('game.wake_cooldown') }} seconds — that's how long Laravel Cloud needs to put it back to sleep.</p>
         </section>
 
         {{-- Stage --}}
         <section class="col-span-12 flex flex-col gap-4 lg:col-span-6">
-            <form wire:submit="startRound" class="flex flex-wrap items-end gap-3 rounded-2xl border border-zinc-800 bg-zinc-900/60 p-4">
-                <div class="flex min-w-40 flex-1 flex-col gap-1">
-                    <label for="player-name" class="text-xs font-semibold tracking-wide text-zinc-400 uppercase">Your name</label>
+            <form wire:submit="startRound" class="flex flex-wrap items-end gap-3 rounded-2xl border border-white/10 bg-zinc-900/50 p-4">
+                <div class="flex min-w-40 flex-1 flex-col gap-1.5">
+                    <label for="player-name" class="font-mono text-xs font-medium tracking-wide text-zinc-500 uppercase">Your name</label>
                     <input
                         id="player-name"
+                        name="player_name"
                         type="text"
                         wire:model="playerName"
                         placeholder="Taylor"
-                        class="rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm focus:border-sky-500 focus:outline-none"
+                        class="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm placeholder:text-zinc-600 focus:outline-2 focus:-outline-offset-1 focus:outline-sky-500 max-sm:text-base"
                     />
                     @error('playerName')
-                        <p class="text-xs text-red-400">{{ $message }}</p>
+                        <p class="text-sm text-red-400">{{ $message }}</p>
                     @enderror
                 </div>
 
-                <div class="flex min-w-40 flex-1 flex-col gap-1">
-                    <label for="guess-ms" class="text-xs font-semibold tracking-wide text-zinc-400 uppercase">Your guess (ms)</label>
+                <div class="flex min-w-40 flex-1 flex-col gap-1.5">
+                    <label for="guess-ms" class="font-mono text-xs font-medium tracking-wide text-zinc-500 uppercase">Your guess (ms)</label>
                     <input
                         id="guess-ms"
+                        name="guess_ms"
                         type="number"
                         min="1"
                         wire:model="guessMs"
                         placeholder="413"
-                        class="rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm focus:border-sky-500 focus:outline-none"
+                        class="rounded-lg border border-white/10 bg-white/5 px-3 py-2 font-mono text-sm tabular-nums placeholder:text-zinc-600 focus:outline-2 focus:-outline-offset-1 focus:outline-sky-500 max-sm:text-base"
                     />
                     @error('guessMs')
-                        <p class="text-xs text-red-400">{{ $message }}</p>
+                        <p class="text-sm text-red-400">{{ $message }}</p>
                     @enderror
                 </div>
 
                 <button
                     type="submit"
                     @disabled($roundActive)
-                    class="rounded-lg bg-sky-500 px-6 py-2 text-sm font-bold text-white transition hover:bg-sky-400 disabled:cursor-not-allowed disabled:opacity-50"
+                    class="rounded-lg bg-sky-500 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-sky-400 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-500 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                     <span wire:loading.remove wire:target="startRound">GO</span>
                     <span wire:loading wire:target="startRound">Checking…</span>
@@ -285,7 +287,7 @@ new #[Title('Guess the Cold Start')] class extends Component
             </form>
 
             @if ($notice)
-                <div wire:key="round-notice" class="rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-300">{{ $notice }}</div>
+                <div wire:key="round-notice" class="rounded-xl border border-amber-400/30 bg-amber-400/10 px-4 py-3 text-sm text-amber-300">{{ $notice }}</div>
             @endif
 
             @if ($lastResult)
@@ -297,44 +299,44 @@ new #[Title('Guess the Cold Start')] class extends Component
                         default => '🐢 Better luck next time!',
                     };
                 @endphp
-                <div wire:key="round-result" class="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-sky-500/40 bg-sky-500/10 px-4 py-3">
+                <div wire:key="round-result" class="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-sky-400/30 bg-sky-400/10 px-4 py-3">
                     <p class="text-sm">
-                        <span class="font-bold">{{ $lastResult['player_name'] }}</span> guessed
-                        <span class="font-mono font-bold">{{ number_format($lastResult['guess_ms']) }} ms</span> —
+                        <span class="font-semibold">{{ $lastResult['player_name'] }}</span> guessed
+                        <span class="font-mono font-semibold">{{ number_format($lastResult['guess_ms']) }} ms</span> —
                         {{ $lastResult['target_name'] }} woke up in
-                        <span class="font-mono font-bold">{{ number_format($lastResult['actual_ms']) }} ms</span>
+                        <span class="font-mono font-semibold">{{ number_format($lastResult['actual_ms']) }} ms</span>
                     </p>
-                    <p class="text-sm font-bold text-sky-300">{{ $verdict }} Off by {{ number_format($lastResult['delta_ms']) }} ms</p>
+                    <p class="text-sm font-semibold text-sky-300">{{ $verdict }} Off by {{ number_format($lastResult['delta_ms']) }} ms</p>
                 </div>
             @endif
 
-            <div wire:ignore wire:key="cold-start-stage" class="flex flex-1 flex-col gap-4 rounded-2xl border border-zinc-800 bg-zinc-900/60 p-4">
+            <div wire:ignore wire:key="cold-start-stage" class="flex flex-1 flex-col gap-4 rounded-2xl border border-white/10 bg-zinc-900/50 p-4">
                 <div class="flex items-baseline justify-center py-2">
-                    <span id="cold-start-stopwatch" class="font-mono text-7xl font-bold tracking-tight tabular-nums">0 ms</span>
+                    <div id="cold-start-stopwatch" class="font-mono text-7xl font-semibold tracking-tight tabular-nums">0 ms</div>
                 </div>
 
                 <iframe
                     id="cold-start-frame"
                     title="Cold start preview"
-                    class="min-h-96 w-full flex-1 rounded-xl border border-zinc-800 bg-white"
+                    class="min-h-96 w-full flex-1 rounded-xl border border-white/10 bg-white transition-opacity duration-300"
                 ></iframe>
             </div>
         </section>
 
         {{-- Leaderboard --}}
-        <section class="col-span-12 flex flex-col gap-5 rounded-2xl border border-zinc-800 bg-zinc-900/60 p-4 lg:col-span-3">
+        <section class="col-span-12 flex flex-col gap-6 rounded-2xl border border-white/10 bg-zinc-900/50 p-4 lg:col-span-3">
             <div>
-                <h2 class="text-sm font-semibold tracking-wide text-zinc-400 uppercase">Leaderboard</h2>
+                <h2 class="font-mono text-xs font-medium tracking-wide text-zinc-500 uppercase">Leaderboard</h2>
 
                 @if ($this->leaderboard->isEmpty())
-                    <p class="mt-2 text-sm text-zinc-600">No rounds yet — be the first!</p>
+                    <p class="mt-3 text-sm text-zinc-500">No rounds yet — be the first!</p>
                 @else
-                    <ol class="mt-2 flex flex-col gap-1.5">
+                    <ol role="list" class="mt-3 flex flex-col gap-2">
                         @foreach ($this->leaderboard as $round)
-                            <li wire:key="leader-{{ $round->id }}" class="flex items-center gap-2 rounded-lg bg-zinc-900 px-3 py-2 text-sm">
-                                <span class="w-5 font-mono text-zinc-500">{{ $loop->iteration }}</span>
-                                <span class="flex-1 truncate font-medium">{{ $round->player_name }}</span>
-                                <span class="font-mono text-xs text-sky-300">±{{ number_format($round->delta_ms) }} ms</span>
+                            <li wire:key="leader-{{ $round->id }}" class="flex items-baseline gap-2.5 text-sm">
+                                <div class="w-5 font-mono text-xs text-zinc-500 tabular-nums">{{ $loop->iteration }}</div>
+                                <div class="flex-1 truncate font-medium">{{ $round->player_name }}</div>
+                                <div class="font-mono text-xs text-sky-300 tabular-nums">±{{ number_format($round->delta_ms) }} ms</div>
                             </li>
                         @endforeach
                     </ol>
@@ -342,14 +344,14 @@ new #[Title('Guess the Cold Start')] class extends Component
             </div>
 
             <div>
-                <h2 class="text-sm font-semibold tracking-wide text-zinc-400 uppercase">Recent rounds</h2>
+                <h2 class="font-mono text-xs font-medium tracking-wide text-zinc-500 uppercase">Recent rounds</h2>
 
                 @if ($this->recentRounds->isEmpty())
-                    <p class="mt-2 text-sm text-zinc-600">Nothing yet.</p>
+                    <p class="mt-3 text-sm text-zinc-500">Nothing yet.</p>
                 @else
-                    <ul class="mt-2 flex flex-col gap-1.5">
+                    <ul role="list" class="mt-3 flex flex-col gap-2">
                         @foreach ($this->recentRounds as $round)
-                            <li wire:key="recent-{{ $round->id }}" class="rounded-lg bg-zinc-900 px-3 py-2 text-xs text-zinc-400">
+                            <li wire:key="recent-{{ $round->id }}" class="text-sm text-zinc-400">
                                 <span class="font-medium text-zinc-200">{{ $round->player_name }}</span>
                                 guessed <span class="font-mono">{{ number_format($round->guess_ms) }}</span>,
                                 actual <span class="font-mono">{{ number_format($round->actual_ms) }}</span>
@@ -375,6 +377,10 @@ new #[Title('Guess the Cold Start')] class extends Component
             abortActiveRound();
         }
 
+        // Blank the stage immediately so the previous round's page disappears.
+        // The frame is revealed again once the target app finishes loading.
+        frame.classList.add('opacity-0');
+
         const start = performance.now();
         let finished = false;
 
@@ -399,6 +405,7 @@ new #[Title('Guess the Cold Start')] class extends Component
         const finish = (ms) => {
             if (finished) return;
             teardown();
+            frame.classList.remove('opacity-0');
             render(ms);
             $wire.recordResult(token, Math.round(ms));
         };
@@ -415,6 +422,8 @@ new #[Title('Guess the Cold Start')] class extends Component
         const timeout = setTimeout(() => {
             if (finished) return;
             teardown();
+            frame.src = 'about:blank';
+            frame.classList.remove('opacity-0');
             $wire.voidRound(token);
         }, timeoutMs);
 

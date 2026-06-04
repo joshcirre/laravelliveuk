@@ -22,7 +22,7 @@ return [
     | Game Tuning
     |--------------------------------------------------------------------------
     |
-    | Statuses are cached for a few seconds so the UI may poll every ten
+    | Statuses are cached for a few seconds so the UI may poll every five
     | seconds without hammering the Cloud API. A round that never finishes
     | loading is voided after the timeout below.
     |
