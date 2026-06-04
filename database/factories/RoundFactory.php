@@ -26,6 +26,7 @@ class RoundFactory extends Factory
             'target_url' => fake()->url(),
             'guess_ms' => $guess,
             'actual_ms' => $actual,
+            'latency_ms' => fake()->numberBetween(20, 250),
             'delta_ms' => abs($guess - $actual),
         ];
     }

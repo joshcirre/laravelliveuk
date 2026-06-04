@@ -21,17 +21,24 @@ class LaravelCloud
     /**
      * Get the cached status of every configured target, keyed by environment ID.
      *
+     * When status checks are disabled, every target reports unknown without
+     * touching the API — playability is left entirely to the wake cooldown.
+     *
      * @return array<string, string>
      */
     public function statuses(): array
     {
+        $enabled = (bool) config('game.cloud_status_enabled');
+
         return collect(config('game.targets'))
             ->mapWithKeys(fn (array $target): array => [
-                $target['environment_id'] => Cache::remember(
-                    $this->cacheKey($target),
-                    config('game.status_cache_ttl'),
-                    fn (): string => $this->fetchStatus($target),
-                ),
+                $target['environment_id'] => $enabled
+                    ? Cache::remember(
+                        $this->cacheKey($target),
+                        config('game.status_cache_ttl'),
+                        fn (): string => $this->fetchStatus($target),
+                    )
+                    : static::STATUS_UNKNOWN,
             ])
             ->all();
     }

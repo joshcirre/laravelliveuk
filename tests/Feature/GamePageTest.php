@@ -11,6 +11,7 @@ beforeEach(function () {
 
     Http::preventStrayRequests();
 
+    config()->set('game.cloud_status_enabled', true);
     config()->set('game.cloud_api_token', 'test-token');
     config()->set('game.targets', [
         [
@@ -40,31 +41,43 @@ function fakeStatuses(string $appOneStatus, string $appTwoStatus = 'running'): v
     ]);
 }
 
-it('renders the game page with target readiness', function () {
+it('renders the game page with app readiness', function () {
     fakeStatuses('running');
 
     $this->get('/')
         ->assertSuccessful()
-        ->assertSee('Guess the Cold Start')
-        ->assertSee('App One')
-        ->assertSee('App Two')
-        ->assertSee('ready');
+        ->assertSee('Guess the')
+        ->assertSee('cold start')
+        ->assertSee('ready to wake');
 });
 
-it('starts a round when the target has cooled down', function () {
+it('skips the Cloud API entirely when status checks are disabled', function () {
+    config()->set('game.cloud_status_enabled', false);
+
+    // No Http::fake() here — preventStrayRequests() fails the test if any request fires.
+    Livewire::test('pages::game')
+        ->set('playerName', 'Josh')
+        ->set('guessMs', 1200)
+        ->call('startRound')
+        ->assertHasNoErrors()
+        ->assertSet('activeEnvId', 'env-1')
+        ->assertDispatched('round-started');
+});
+
+it('starts a round with the first available app', function () {
     fakeStatuses('running');
 
     Livewire::test('pages::game')
         ->set('playerName', 'Josh')
         ->set('guessMs', 1200)
-        ->call('selectTarget', 'env-1')
         ->call('startRound')
         ->assertHasNoErrors()
         ->assertSet('roundActive', true)
+        ->assertSet('activeEnvId', 'env-1')
         ->assertDispatched('round-started');
 });
 
-it('blocks a round while the target is cooling down', function () {
+it('auto-selects the next app when the first is cooling down', function () {
     fakeStatuses('running');
 
     app(WakeTracker::class)->markWoken('env-1');
@@ -72,49 +85,88 @@ it('blocks a round while the target is cooling down', function () {
     Livewire::test('pages::game')
         ->set('playerName', 'Josh')
         ->set('guessMs', 1200)
-        ->call('selectTarget', 'env-1')
         ->call('startRound')
-        ->assertHasErrors('selectedEnvId')
+        ->assertHasNoErrors()
+        ->assertSet('activeEnvId', 'env-2')
+        ->assertDispatched('round-started');
+});
+
+it('auto-selects around an app that is deploying or stopped', function (string $status) {
+    fakeStatuses($status);
+
+    Livewire::test('pages::game')
+        ->set('playerName', 'Josh')
+        ->set('guessMs', 1200)
+        ->call('startRound')
+        ->assertHasNoErrors()
+        ->assertSet('activeEnvId', 'env-2')
+        ->assertDispatched('round-started');
+})->with(['deploying', 'stopped']);
+
+it('blocks a round when every app is cooling down', function () {
+    fakeStatuses('running');
+
+    app(WakeTracker::class)->markWoken('env-1');
+    app(WakeTracker::class)->markWoken('env-2');
+
+    Livewire::test('pages::game')
+        ->set('playerName', 'Josh')
+        ->set('guessMs', 1200)
+        ->call('startRound')
+        ->assertHasErrors('round')
         ->assertSet('roundActive', false)
         ->assertNotDispatched('round-started');
 
     expect(Round::count())->toBe(0);
 });
 
-it('puts the target on cooldown when a round starts', function () {
+it('blocks a round when no app is playable', function () {
+    fakeStatuses('deploying', 'stopped');
+
+    Livewire::test('pages::game')
+        ->set('playerName', 'Josh')
+        ->set('guessMs', 1200)
+        ->call('startRound')
+        ->assertHasErrors('round')
+        ->assertNotDispatched('round-started');
+
+    expect(Round::count())->toBe(0);
+});
+
+it('puts the chosen app on cooldown when a round starts', function () {
     fakeStatuses('running');
 
     Livewire::test('pages::game')
         ->set('playerName', 'Josh')
         ->set('guessMs', 1200)
-        ->call('selectTarget', 'env-1')
         ->call('startRound')
         ->assertHasNoErrors();
 
     expect(app(WakeTracker::class)->isReady('env-1'))->toBeFalse();
 });
 
-it('blocks a round when the target is deploying or stopped', function (string $status) {
-    fakeStatuses($status);
-
-    Livewire::test('pages::game')
-        ->set('playerName', 'Josh')
-        ->set('guessMs', 1200)
-        ->call('selectTarget', 'env-1')
-        ->call('startRound')
-        ->assertHasErrors('selectedEnvId')
-        ->assertNotDispatched('round-started');
-
-    expect(Round::count())->toBe(0);
-})->with(['deploying', 'stopped']);
-
 it('validates the player name and guess before starting', function () {
     fakeStatuses('running');
 
     Livewire::test('pages::game')
         ->call('startRound')
-        ->assertHasErrors(['playerName', 'guessMs', 'selectedEnvId'])
+        ->assertHasErrors(['playerName', 'guessMs'])
         ->assertNotDispatched('round-started');
+});
+
+it('ignores a second start while a round is active', function () {
+    fakeStatuses('running');
+
+    $component = Livewire::test('pages::game')
+        ->set('playerName', 'Josh')
+        ->set('guessMs', 1200)
+        ->call('startRound');
+
+    $token = $component->get('roundToken');
+
+    $component->call('startRound')
+        ->assertSet('roundToken', $token)
+        ->assertSet('activeEnvId', 'env-1');
 });
 
 it('records a finished round with the computed delta', function () {
@@ -123,15 +175,16 @@ it('records a finished round with the computed delta', function () {
     $component = Livewire::test('pages::game')
         ->set('playerName', 'Josh')
         ->set('guessMs', 1200)
-        ->call('selectTarget', 'env-1')
         ->call('startRound');
 
     $token = $component->get('roundToken');
 
-    $component->call('recordResult', $token, 1500)
+    $component->call('recordResult', $token, 1500, 95)
         ->assertSet('roundActive', false)
         ->assertSet('roundToken', null)
-        ->assertSee('Off by 300 ms');
+        ->assertSee('scaled from zero in 1,500 ms')
+        ->assertSee('off by 300 ms')
+        ->assertSee('Includes ~95 ms of round-trip latency');
 
     $round = Round::sole();
 
@@ -141,7 +194,47 @@ it('records a finished round with the computed delta', function () {
         ->target_url->toBe('https://app-one.test')
         ->guess_ms->toBe(1200)
         ->actual_ms->toBe(1500)
+        ->latency_ms->toBe(95)
         ->delta_ms->toBe(300);
+});
+
+it('records a round without latency when the measurement fails', function () {
+    fakeStatuses('running');
+
+    $component = Livewire::test('pages::game')
+        ->set('playerName', 'Josh')
+        ->set('guessMs', 1200)
+        ->call('startRound');
+
+    $component->call('recordResult', $component->get('roundToken'), 1500)
+        ->assertDontSee('round-trip latency');
+
+    expect(Round::sole()->latency_ms)->toBeNull();
+});
+
+it('caps a reported latency at the actual wake time', function () {
+    fakeStatuses('running');
+
+    $component = Livewire::test('pages::game')
+        ->set('playerName', 'Josh')
+        ->set('guessMs', 1200)
+        ->call('startRound');
+
+    $component->call('recordResult', $component->get('roundToken'), 1500, 9999);
+
+    expect(Round::sole()->latency_ms)->toBe(1500);
+});
+
+it('does not reveal which app was used in the result', function () {
+    fakeStatuses('running');
+
+    $component = Livewire::test('pages::game')
+        ->set('playerName', 'Josh')
+        ->set('guessMs', 1200)
+        ->call('startRound');
+
+    $component->call('recordResult', $component->get('roundToken'), 1500)
+        ->assertDontSee('App One');
 });
 
 it('ignores results with a stale token', function () {
@@ -150,7 +243,6 @@ it('ignores results with a stale token', function () {
     Livewire::test('pages::game')
         ->set('playerName', 'Josh')
         ->set('guessMs', 1200)
-        ->call('selectTarget', 'env-1')
         ->call('startRound')
         ->call('recordResult', 1, 1500)
         ->assertSet('roundActive', true);
@@ -173,7 +265,6 @@ it('voids a round on timeout without persisting anything', function () {
     $component = Livewire::test('pages::game')
         ->set('playerName', 'Josh')
         ->set('guessMs', 1200)
-        ->call('selectTarget', 'env-1')
         ->call('startRound');
 
     $token = $component->get('roundToken');
@@ -194,16 +285,4 @@ it('shows the closest guesses on the leaderboard', function () {
 
     Livewire::test('pages::game')
         ->assertSeeInOrder(['Closest', 'Middle', 'Furthest']);
-});
-
-it('cannot select a target while a round is active', function () {
-    fakeStatuses('running', 'running');
-
-    Livewire::test('pages::game')
-        ->set('playerName', 'Josh')
-        ->set('guessMs', 1200)
-        ->call('selectTarget', 'env-1')
-        ->call('startRound')
-        ->call('selectTarget', 'env-2')
-        ->assertSet('selectedEnvId', 'env-1');
 });

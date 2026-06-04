@@ -9,9 +9,13 @@ return [
     |
     | The API token is created in the Laravel Cloud dashboard under your
     | organization settings. It is used to poll the status of each target
-    | environment so the game knows which applications are hibernating.
+    | environment. Status checks are disabled by default because the API
+    | currently reports hibernating environments as "running", so the calls
+    | only add latency. Flip the flag once the API reports real statuses.
     |
     */
+
+    'cloud_status_enabled' => env('GAME_CLOUD_STATUS_ENABLED', false),
 
     'cloud_api_token' => env('LARAVEL_CLOUD_API_TOKEN'),
 
@@ -31,6 +35,8 @@ return [
     'status_cache_ttl' => 8,
 
     'round_timeout_ms' => 30000,
+
+    'server_region' => env('GAME_SERVER_REGION', 'London'),
 
     /*
     |--------------------------------------------------------------------------

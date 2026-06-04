@@ -14,13 +14,13 @@ new #[Title('Guess the Cold Start')] class extends Component
 
     public ?int $guessMs = null;
 
-    public ?string $selectedEnvId = null;
-
     public bool $roundActive = false;
 
     public ?int $roundToken = null;
 
-    /** @var array{player_name: string, target_name: string, guess_ms: int, actual_ms: int, delta_ms: int}|null */
+    public ?string $activeEnvId = null;
+
+    /** @var array{player_name: string, target_name: string, guess_ms: int, actual_ms: int, latency_ms: int|null, delta_ms: int}|null */
     public ?array $lastResult = null;
 
     public ?string $notice = null;
@@ -35,7 +35,6 @@ new #[Title('Guess the Cold Start')] class extends Component
         return [
             'playerName' => ['required', 'string', 'max:50'],
             'guessMs' => ['required', 'integer', 'min:1', 'max:120000'],
-            'selectedEnvId' => ['required', 'string'],
         ];
     }
 
@@ -66,6 +65,23 @@ new #[Title('Guess the Cold Start')] class extends Component
     }
 
     #[Computed]
+    public function readyCount(): int
+    {
+        return $this->targets->where('playable', true)->count();
+    }
+
+    /**
+     * Get the seconds until the next cooling target becomes playable, if any.
+     */
+    #[Computed]
+    public function nextReadySeconds(): ?int
+    {
+        return $this->targets
+            ->reject(fn (array $target): bool => in_array($target['status'], ['deploying', 'stopped']))
+            ->min('cooldown');
+    }
+
+    #[Computed]
     public function leaderboard(): Collection
     {
         return Round::closest()->limit(10)->get();
@@ -77,49 +93,32 @@ new #[Title('Guess the Cold Start')] class extends Component
         return Round::recent()->limit(8)->get();
     }
 
-    public function selectTarget(string $environmentId): void
+    public function startRound(): void
     {
         if ($this->roundActive) {
             return;
         }
 
-        $this->resetErrorBag('selectedEnvId');
-        $this->selectedEnvId = $environmentId;
-    }
-
-    public function startRound(): void
-    {
         $this->validate();
 
-        $target = $this->findTarget($this->selectedEnvId);
+        $target = $this->targets->firstWhere('playable', true);
 
         if ($target === null) {
-            $this->addError('selectedEnvId', 'Pick one of the apps on the left.');
+            $seconds = $this->nextReadySeconds;
+
+            $this->addError('round', $seconds !== null && $seconds > 0
+                ? "Every app is still recovering — the next one is ready in about {$seconds} seconds."
+                : 'No apps are available right now — try again in a moment.');
 
             return;
         }
 
-        $status = app(LaravelCloud::class)->statuses()[$target['environment_id']] ?? LaravelCloud::STATUS_UNKNOWN;
+        app(WakeTracker::class)->markWoken($target['environment_id']);
 
-        if (in_array($status, ['deploying', 'stopped'])) {
-            $this->addError('selectedEnvId', "That app is {$status} right now — pick another one.");
-
-            return;
-        }
-
-        $tracker = app(WakeTracker::class);
-
-        if (! $tracker->isReady($target['environment_id'])) {
-            $seconds = $tracker->secondsUntilReady($target['environment_id']);
-            $this->addError('selectedEnvId', "That app was woken recently — ready again in about {$seconds} seconds.");
-
-            return;
-        }
-
-        $tracker->markWoken($target['environment_id']);
-
+        $this->resetErrorBag('round');
         $this->lastResult = null;
         $this->notice = null;
+        $this->activeEnvId = $target['environment_id'];
         $this->roundActive = true;
         $this->roundToken = random_int(100000, 99999999);
 
@@ -131,13 +130,13 @@ new #[Title('Guess the Cold Start')] class extends Component
         );
     }
 
-    public function recordResult(int $token, int $actualMs): void
+    public function recordResult(int $token, int $actualMs, ?int $latencyMs = null): void
     {
         if (! $this->roundActive || $token !== $this->roundToken) {
             return;
         }
 
-        $target = $this->findTarget($this->selectedEnvId);
+        $target = $this->findTarget($this->activeEnvId);
 
         $round = Round::create([
             'player_name' => $this->playerName,
@@ -145,10 +144,11 @@ new #[Title('Guess the Cold Start')] class extends Component
             'target_url' => $target['url'],
             'guess_ms' => $this->guessMs,
             'actual_ms' => $actualMs,
+            'latency_ms' => $latencyMs !== null ? min(max($latencyMs, 0), $actualMs) : null,
             'delta_ms' => abs($this->guessMs - $actualMs),
         ]);
 
-        $this->lastResult = $round->only(['player_name', 'target_name', 'guess_ms', 'actual_ms', 'delta_ms']);
+        $this->lastResult = $round->only(['player_name', 'target_name', 'guess_ms', 'actual_ms', 'latency_ms', 'delta_ms']);
         $this->finishRound();
     }
 
@@ -166,7 +166,7 @@ new #[Title('Guess the Cold Start')] class extends Component
     {
         $this->roundActive = false;
         $this->roundToken = null;
-        $this->selectedEnvId = null;
+        $this->activeEnvId = null;
         $this->guessMs = null;
     }
 
@@ -182,187 +182,162 @@ new #[Title('Guess the Cold Start')] class extends Component
 };
 ?>
 
-<div class="mx-auto flex min-h-dvh max-w-screen-2xl flex-col gap-6 p-6 isolate">
-    <header class="flex flex-wrap items-end justify-between gap-2">
-        <div>
-            <h1 class="text-2xl font-semibold tracking-tight text-balance">Guess the Cold Start ❄️</h1>
-            <p class="mt-1 text-sm text-pretty text-zinc-400">Pick a hibernating app, guess its wake-up time in milliseconds, then watch it load. Closest guess wins.</p>
+<div class="relative isolate h-dvh overflow-hidden">
+    {{-- Stage: full-bleed dot grid, the waking app, and the stopwatch --}}
+    <div wire:ignore wire:key="cold-start-stage" class="absolute inset-0">
+        <div class="absolute inset-0 bg-[radial-gradient(var(--color-slate-200)_1px,transparent_1px)] [background-size:8px_8px]"></div>
+
+        <iframe
+            id="cold-start-frame"
+            title="Cold start preview"
+            class="absolute inset-0 size-full bg-white opacity-0 transition-opacity duration-300"
+        ></iframe>
+
+        <div class="pointer-events-none absolute top-6 left-1/2 z-10 -translate-x-1/2">
+            <div id="cold-start-stopwatch" class="rounded-full bg-white px-6 py-2.5 font-mono text-4xl font-semibold tracking-tight tabular-nums shadow-md ring-1 ring-black/5">0 ms</div>
         </div>
-        <p class="font-mono text-xs tracking-wide text-zinc-500 uppercase">Powered by Laravel Cloud hibernation</p>
-    </header>
 
-    <div class="grid flex-1 grid-cols-12 gap-6">
-        {{-- Targets --}}
-        <section
-            wire:poll.5s
-            class="col-span-12 flex flex-col gap-4 rounded-2xl border border-white/10 bg-zinc-900/50 p-4 lg:col-span-3"
-        >
-            <h2 class="font-mono text-xs font-medium tracking-wide text-zinc-500 uppercase">Apps</h2>
+        <div class="pointer-events-none absolute bottom-6 left-6 z-10 max-lg:hidden">
+            <p class="rounded-full bg-white px-3 py-1.5 font-mono text-xs tracking-wide text-slate-500 uppercase shadow-xs ring-1 ring-black/5">Powered by Laravel Cloud</p>
+        </div>
+    </div>
 
-            <ul role="list" class="flex flex-col gap-2">
-                @foreach ($this->targets as $target)
+    {{-- Start / result overlay: fades away while the run is live --}}
+    <div class="absolute inset-0 z-20 grid place-items-center p-6 transition-opacity duration-500 {{ $roundActive ? 'pointer-events-none opacity-0' : '' }}">
+        <div class="w-full max-w-md rounded-3xl bg-white/60 p-1.5 shadow-2xl ring-1 ring-black/5 backdrop-blur-sm">
+            <div class="flex flex-col gap-5 rounded-2xl bg-white p-6 shadow-xs ring-1 ring-black/5">
+                <div class="flex flex-col gap-2">
+                    <h1 class="text-2xl font-semibold tracking-tight text-balance">Guess the <span class="font-serif italic">cold start</span> ❄️</h1>
+                    <p class="text-sm text-pretty text-slate-500">A hibernating Laravel Cloud app is about to wake up. Guess how many milliseconds it takes to scale from zero — closest guess wins.</p>
+                </div>
+
+                @if ($notice)
+                    <div wire:key="round-notice" class="rounded-xl bg-amber-50 px-4 py-3 text-sm text-amber-700 ring-1 ring-amber-600/20">{{ $notice }}</div>
+                @endif
+
+                @if ($lastResult)
                     @php
-                        $isSelected = $selectedEnvId === $target['environment_id'];
-                        [$label, $badge] = match (true) {
-                            $target['status'] === 'deploying' => ['deploying', 'bg-amber-400/10 text-amber-300 ring-amber-400/30'],
-                            $target['status'] === 'stopped' => ['stopped', 'bg-red-400/10 text-red-300 ring-red-400/30'],
-                            $target['cooldown'] > 0 => ["cooling {$target['cooldown']}s", 'bg-white/5 text-zinc-400 ring-white/15'],
-                            default => ['ready', 'bg-emerald-400/10 text-emerald-300 ring-emerald-400/30'],
+                        $verdict = match (true) {
+                            $lastResult['delta_ms'] <= 50 => '🎯 Unbelievable!',
+                            $lastResult['delta_ms'] <= 250 => '🔥 So close!',
+                            $lastResult['delta_ms'] <= 1000 => '👏 Not bad!',
+                            default => '🐢 Better luck next time!',
                         };
                     @endphp
-
-                    <li wire:key="target-{{ $target['environment_id'] }}">
-                        <button
-                            type="button"
-                            wire:click="selectTarget('{{ $target['environment_id'] }}')"
-                            @disabled($roundActive || ! $target['playable'])
-                            class="flex w-full items-center justify-between gap-2 rounded-xl border p-3 text-left text-sm transition
-                                {{ $isSelected ? 'border-sky-400/60 bg-sky-400/10' : 'border-white/10 bg-white/2.5' }}
-                                {{ $target['playable'] && ! $roundActive ? 'cursor-pointer hover:border-sky-400/40 hover:bg-white/5' : 'opacity-40' }}"
-                        >
-                            <span class="font-medium">{{ $target['name'] }}</span>
-                            <span class="inline-flex items-center gap-1.5 rounded-full py-0.5 font-mono text-[0.6875rem] font-medium tracking-wide uppercase ring-1 tabular-nums {{ $target['playable'] ? 'pr-2 pl-1.5' : 'px-2' }} {{ $badge }}">
-                                @if ($target['playable'])
-                                    <span class="relative flex size-1.5">
-                                        <span class="absolute inline-flex size-full animate-ping rounded-full bg-emerald-400 opacity-75"></span>
-                                        <span class="relative inline-flex size-1.5 rounded-full bg-emerald-400"></span>
-                                    </span>
-                                @endif
-                                {{ $label }}
-                            </span>
-                        </button>
-                    </li>
-                @endforeach
-            </ul>
-
-            @error('selectedEnvId')
-                <p class="text-sm text-red-400">{{ $message }}</p>
-            @enderror
-
-            <p class="mt-auto text-sm text-pretty text-zinc-500">An app is <span class="text-emerald-400">ready</span> once nobody has clicked it for {{ config('game.wake_cooldown') }} seconds — that's how long Laravel Cloud needs to put it back to sleep.</p>
-        </section>
-
-        {{-- Stage --}}
-        <section class="col-span-12 flex flex-col gap-4 lg:col-span-6">
-            <form wire:submit="startRound" class="flex flex-wrap items-end gap-3 rounded-2xl border border-white/10 bg-zinc-900/50 p-4">
-                <div class="flex min-w-40 flex-1 flex-col gap-1.5">
-                    <label for="player-name" class="font-mono text-xs font-medium tracking-wide text-zinc-500 uppercase">Your name</label>
-                    <input
-                        id="player-name"
-                        name="player_name"
-                        type="text"
-                        wire:model="playerName"
-                        placeholder="Taylor"
-                        class="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm placeholder:text-zinc-600 focus:outline-2 focus:-outline-offset-1 focus:outline-sky-500 max-sm:text-base"
-                    />
-                    @error('playerName')
-                        <p class="text-sm text-red-400">{{ $message }}</p>
-                    @enderror
-                </div>
-
-                <div class="flex min-w-40 flex-1 flex-col gap-1.5">
-                    <label for="guess-ms" class="font-mono text-xs font-medium tracking-wide text-zinc-500 uppercase">Your guess (ms)</label>
-                    <input
-                        id="guess-ms"
-                        name="guess_ms"
-                        type="number"
-                        min="1"
-                        wire:model="guessMs"
-                        placeholder="413"
-                        class="rounded-lg border border-white/10 bg-white/5 px-3 py-2 font-mono text-sm tabular-nums placeholder:text-zinc-600 focus:outline-2 focus:-outline-offset-1 focus:outline-sky-500 max-sm:text-base"
-                    />
-                    @error('guessMs')
-                        <p class="text-sm text-red-400">{{ $message }}</p>
-                    @enderror
-                </div>
-
-                <button
-                    type="submit"
-                    @disabled($roundActive)
-                    class="rounded-lg bg-sky-500 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-sky-400 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-500 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                    <span wire:loading.remove wire:target="startRound">GO</span>
-                    <span wire:loading wire:target="startRound">Checking…</span>
-                </button>
-            </form>
-
-            @if ($notice)
-                <div wire:key="round-notice" class="rounded-xl border border-amber-400/30 bg-amber-400/10 px-4 py-3 text-sm text-amber-300">{{ $notice }}</div>
-            @endif
-
-            @if ($lastResult)
-                @php
-                    $verdict = match (true) {
-                        $lastResult['delta_ms'] <= 50 => '🎯 Unbelievable!',
-                        $lastResult['delta_ms'] <= 250 => '🔥 So close!',
-                        $lastResult['delta_ms'] <= 1000 => '👏 Not bad!',
-                        default => '🐢 Better luck next time!',
-                    };
-                @endphp
-                <div wire:key="round-result" class="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-sky-400/30 bg-sky-400/10 px-4 py-3">
-                    <p class="text-sm">
-                        <span class="font-semibold">{{ $lastResult['player_name'] }}</span> guessed
-                        <span class="font-mono font-semibold">{{ number_format($lastResult['guess_ms']) }} ms</span> —
-                        {{ $lastResult['target_name'] }} woke up in
-                        <span class="font-mono font-semibold">{{ number_format($lastResult['actual_ms']) }} ms</span>
-                    </p>
-                    <p class="text-sm font-semibold text-sky-300">{{ $verdict }} Off by {{ number_format($lastResult['delta_ms']) }} ms</p>
-                </div>
-            @endif
-
-            <div wire:ignore wire:key="cold-start-stage" class="flex flex-1 flex-col gap-4 rounded-2xl border border-white/10 bg-zinc-900/50 p-4">
-                <div class="flex items-baseline justify-center py-2">
-                    <div id="cold-start-stopwatch" class="font-mono text-7xl font-semibold tracking-tight tabular-nums">0 ms</div>
-                </div>
-
-                <iframe
-                    id="cold-start-frame"
-                    title="Cold start preview"
-                    class="min-h-96 w-full flex-1 rounded-xl border border-white/10 bg-white transition-opacity duration-300"
-                ></iframe>
-            </div>
-        </section>
-
-        {{-- Leaderboard --}}
-        <section class="col-span-12 flex flex-col gap-6 rounded-2xl border border-white/10 bg-zinc-900/50 p-4 lg:col-span-3">
-            <div>
-                <h2 class="font-mono text-xs font-medium tracking-wide text-zinc-500 uppercase">Leaderboard</h2>
-
-                @if ($this->leaderboard->isEmpty())
-                    <p class="mt-3 text-sm text-zinc-500">No rounds yet — be the first!</p>
-                @else
-                    <ol role="list" class="mt-3 flex flex-col gap-2">
-                        @foreach ($this->leaderboard as $round)
-                            <li wire:key="leader-{{ $round->id }}" class="flex items-baseline gap-2.5 text-sm">
-                                <div class="w-5 font-mono text-xs text-zinc-500 tabular-nums">{{ $loop->iteration }}</div>
-                                <div class="flex-1 truncate font-medium">{{ $round->player_name }}</div>
-                                <div class="font-mono text-xs text-sky-300 tabular-nums">±{{ number_format($round->delta_ms) }} ms</div>
-                            </li>
-                        @endforeach
-                    </ol>
+                    <div wire:key="round-result" class="flex flex-col gap-1.5 rounded-xl bg-cloud/4 px-4 py-3.5 ring-1 ring-cloud/15">
+                        <p class="text-sm font-medium text-cloud">{{ $verdict }}</p>
+                        <p class="font-semibold tracking-tight text-balance">Laravel Cloud scaled from zero in {{ number_format($lastResult['actual_ms']) }} ms</p>
+                        <p class="text-sm text-slate-500">{{ $lastResult['player_name'] }} guessed {{ number_format($lastResult['guess_ms']) }} ms — off by {{ number_format($lastResult['delta_ms']) }} ms.</p>
+                        @if (($lastResult['latency_ms'] ?? null) !== null)
+                            <p class="text-sm text-slate-400">Includes ~{{ number_format($lastResult['latency_ms']) }} ms of round-trip latency to our {{ config('game.server_region') }} server.</p>
+                        @endif
+                    </div>
                 @endif
-            </div>
 
-            <div>
-                <h2 class="font-mono text-xs font-medium tracking-wide text-zinc-500 uppercase">Recent rounds</h2>
+                <form wire:submit="startRound" class="flex flex-col gap-4">
+                    <div class="flex flex-col gap-1.5">
+                        <label for="player-name" class="text-sm font-medium text-slate-700">Your name</label>
+                        <input
+                            id="player-name"
+                            name="player_name"
+                            type="text"
+                            wire:model="playerName"
+                            placeholder="Taylor"
+                            class="h-10 w-full rounded-md border border-black/10 bg-white px-3 text-sm placeholder:text-slate-400 hover:border-black/20 focus:border-cloud focus:ring-[3px] focus:ring-cloud/15 focus:outline-hidden max-sm:text-base"
+                        />
+                        @error('playerName')
+                            <p class="text-sm text-red-600">{{ $message }}</p>
+                        @enderror
+                    </div>
 
-                @if ($this->recentRounds->isEmpty())
-                    <p class="mt-3 text-sm text-zinc-500">Nothing yet.</p>
-                @else
-                    <ul role="list" class="mt-3 flex flex-col gap-2">
-                        @foreach ($this->recentRounds as $round)
-                            <li wire:key="recent-{{ $round->id }}" class="text-sm text-zinc-400">
-                                <span class="font-medium text-zinc-200">{{ $round->player_name }}</span>
-                                guessed <span class="font-mono">{{ number_format($round->guess_ms) }}</span>,
-                                actual <span class="font-mono">{{ number_format($round->actual_ms) }}</span>
-                                <span class="font-mono text-sky-300/80">(±{{ number_format($round->delta_ms) }})</span>
-                            </li>
-                        @endforeach
-                    </ul>
-                @endif
+                    <div class="flex flex-col gap-1.5">
+                        <label for="guess-ms" class="text-sm font-medium text-slate-700">Your guess (ms)</label>
+                        <input
+                            id="guess-ms"
+                            name="guess_ms"
+                            type="number"
+                            min="1"
+                            wire:model="guessMs"
+                            placeholder="413"
+                            class="h-10 w-full rounded-md border border-black/10 bg-white px-3 font-mono text-sm tabular-nums placeholder:text-slate-400 hover:border-black/20 focus:border-cloud focus:ring-[3px] focus:ring-cloud/15 focus:outline-hidden max-sm:text-base"
+                        />
+                        @error('guessMs')
+                            <p class="text-sm text-red-600">{{ $message }}</p>
+                        @enderror
+                    </div>
+
+                    <button
+                        type="submit"
+                        @disabled($roundActive)
+                        class="h-10 rounded-md bg-cloud px-4 text-sm font-medium text-white transition-colors hover:bg-cloud/90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cloud disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                        <span wire:loading.remove wire:target="startRound">{{ $lastResult ? 'Go again' : 'Wake an app' }}</span>
+                        <span wire:loading wire:target="startRound">Waking…</span>
+                    </button>
+
+                    @error('round')
+                        <p class="text-sm text-red-600">{{ $message }}</p>
+                    @enderror
+                </form>
+
+                <div wire:poll.5s class="flex items-center gap-2 border-t border-black/5 pt-4 text-sm text-slate-500">
+                    @if ($this->readyCount > 0)
+                        <span class="relative flex size-2">
+                            <span class="absolute inline-flex size-full animate-ping rounded-full bg-emerald-400 opacity-75"></span>
+                            <span class="relative inline-flex size-2 rounded-full bg-emerald-500"></span>
+                        </span>
+                        An app is hibernating and ready to wake
+                    @elseif ($this->nextReadySeconds !== null && $this->nextReadySeconds > 0)
+                        <span class="inline-flex size-2 rounded-full bg-amber-400"></span>
+                        Every app is recovering — next one ready in ~{{ $this->nextReadySeconds }}s
+                    @else
+                        <span class="inline-flex size-2 rounded-full bg-slate-300"></span>
+                        Waiting for an app to become available…
+                    @endif
+                </div>
             </div>
-        </section>
+        </div>
     </div>
+
+    {{-- Leaderboard overlay: always pinned to the right --}}
+    <aside class="absolute top-6 right-6 z-10 hidden max-h-[calc(100%-3rem)] w-72 flex-col gap-6 overflow-y-auto rounded-2xl bg-white/85 p-5 shadow-lg ring-1 ring-black/5 backdrop-blur-md lg:flex">
+        <div>
+            <h2 class="font-mono text-xs font-medium tracking-wide text-slate-400 uppercase">Leaderboard</h2>
+
+            @if ($this->leaderboard->isEmpty())
+                <p class="mt-3 text-sm text-slate-400">No rounds yet — be the first!</p>
+            @else
+                <ol role="list" class="mt-3 flex flex-col gap-2">
+                    @foreach ($this->leaderboard as $round)
+                        <li wire:key="leader-{{ $round->id }}" class="flex items-baseline gap-2.5 text-sm">
+                            <div class="w-5 font-mono text-xs text-slate-400 tabular-nums">{{ $loop->iteration }}</div>
+                            <div class="flex-1 truncate font-medium text-slate-700">{{ $round->player_name }}</div>
+                            <div class="font-mono text-xs text-cloud tabular-nums">±{{ number_format($round->delta_ms) }} ms</div>
+                        </li>
+                    @endforeach
+                </ol>
+            @endif
+        </div>
+
+        <div>
+            <h2 class="font-mono text-xs font-medium tracking-wide text-slate-400 uppercase">Recent rounds</h2>
+
+            @if ($this->recentRounds->isEmpty())
+                <p class="mt-3 text-sm text-slate-400">Nothing yet.</p>
+            @else
+                <ul role="list" class="mt-3 flex flex-col gap-2">
+                    @foreach ($this->recentRounds as $round)
+                        <li wire:key="recent-{{ $round->id }}" class="text-sm text-slate-500">
+                            <span class="font-medium text-slate-700">{{ $round->player_name }}</span>
+                            guessed <span class="font-mono">{{ number_format($round->guess_ms) }}</span>,
+                            actual <span class="font-mono">{{ number_format($round->actual_ms) }}</span>
+                            <span class="font-mono text-cloud/70">(±{{ number_format($round->delta_ms) }})</span>
+                        </li>
+                    @endforeach
+                </ul>
+            @endif
+        </div>
+    </aside>
 </div>
 
 <script>
@@ -402,12 +377,34 @@ new #[Title('Guess the Cold Start')] class extends Component
             abortActiveRound = null;
         };
 
-        const finish = (ms) => {
+        // Once the app is awake, time a few warm requests and report the fastest
+        // as the network round-trip — it shows how much of the wake was latency.
+        const measureLatency = async () => {
+            let best = null;
+
+            for (let i = 0; i < 3; i++) {
+                const t0 = performance.now();
+
+                try {
+                    await fetch(url, { mode: 'no-cors', cache: 'no-store' });
+                } catch (error) {
+                    return null;
+                }
+
+                const ms = performance.now() - t0;
+                best = best === null ? ms : Math.min(best, ms);
+            }
+
+            return Math.round(best);
+        };
+
+        const finish = async (ms) => {
             if (finished) return;
             teardown();
             frame.classList.remove('opacity-0');
             render(ms);
-            $wire.recordResult(token, Math.round(ms));
+            const latency = await measureLatency();
+            $wire.recordResult(token, Math.round(ms), latency);
         };
 
         // Primary stop: the iframe finished loading. Optional earlier stop: the
@@ -423,7 +420,6 @@ new #[Title('Guess the Cold Start')] class extends Component
             if (finished) return;
             teardown();
             frame.src = 'about:blank';
-            frame.classList.remove('opacity-0');
             $wire.voidRound(token);
         }, timeoutMs);
 

@@ -12,6 +12,7 @@ beforeEach(function () {
 
     Http::preventStrayRequests();
 
+    config()->set('game.cloud_status_enabled', true);
     config()->set('game.cloud_api_token', 'test-token');
     config()->set('game.targets', [
         [
@@ -94,6 +95,16 @@ it('bypasses the cache when fetching a fresh status', function () {
         ->and($cloud->statuses()['env-1'])->toBe('running');
 
     Http::assertSentCount(3);
+});
+
+it('reports unknown without calling the API when status checks are disabled', function () {
+    config()->set('game.cloud_status_enabled', false);
+
+    // No Http::fake() here — preventStrayRequests() fails the test if any request fires.
+    expect(app(LaravelCloud::class)->statuses())->toBe([
+        'env-1' => 'unknown',
+        'env-2' => 'unknown',
+    ]);
 });
 
 it('reports unknown when the request fails', function () {
