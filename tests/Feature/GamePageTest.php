@@ -1,6 +1,7 @@
 <?php
 
 use App\Models\Round;
+use App\Services\WakeTracker;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Livewire\Livewire;
@@ -39,20 +40,19 @@ function fakeStatuses(string $appOneStatus, string $appTwoStatus = 'running'): v
     ]);
 }
 
-it('renders the game page with target statuses', function () {
-    fakeStatuses('hibernating');
+it('renders the game page with target readiness', function () {
+    fakeStatuses('running');
 
     $this->get('/')
         ->assertSuccessful()
         ->assertSee('Guess the Cold Start')
         ->assertSee('App One')
         ->assertSee('App Two')
-        ->assertSee('hibernating')
-        ->assertSee('running');
+        ->assertSee('ready');
 });
 
-it('starts a round when the target is hibernating', function () {
-    fakeStatuses('hibernating');
+it('starts a round when the target has cooled down', function () {
+    fakeStatuses('running');
 
     Livewire::test('pages::game')
         ->set('playerName', 'Josh')
@@ -64,8 +64,10 @@ it('starts a round when the target is hibernating', function () {
         ->assertDispatched('round-started');
 });
 
-it('blocks a round when the target is no longer hibernating', function () {
+it('blocks a round while the target is cooling down', function () {
     fakeStatuses('running');
+
+    app(WakeTracker::class)->markWoken('env-1');
 
     Livewire::test('pages::game')
         ->set('playerName', 'Josh')
@@ -79,8 +81,35 @@ it('blocks a round when the target is no longer hibernating', function () {
     expect(Round::count())->toBe(0);
 });
 
+it('puts the target on cooldown when a round starts', function () {
+    fakeStatuses('running');
+
+    Livewire::test('pages::game')
+        ->set('playerName', 'Josh')
+        ->set('guessMs', 1200)
+        ->call('selectTarget', 'env-1')
+        ->call('startRound')
+        ->assertHasNoErrors();
+
+    expect(app(WakeTracker::class)->isReady('env-1'))->toBeFalse();
+});
+
+it('blocks a round when the target is deploying or stopped', function (string $status) {
+    fakeStatuses($status);
+
+    Livewire::test('pages::game')
+        ->set('playerName', 'Josh')
+        ->set('guessMs', 1200)
+        ->call('selectTarget', 'env-1')
+        ->call('startRound')
+        ->assertHasErrors('selectedEnvId')
+        ->assertNotDispatched('round-started');
+
+    expect(Round::count())->toBe(0);
+})->with(['deploying', 'stopped']);
+
 it('validates the player name and guess before starting', function () {
-    fakeStatuses('hibernating');
+    fakeStatuses('running');
 
     Livewire::test('pages::game')
         ->call('startRound')
@@ -89,7 +118,7 @@ it('validates the player name and guess before starting', function () {
 });
 
 it('records a finished round with the computed delta', function () {
-    fakeStatuses('hibernating');
+    fakeStatuses('running');
 
     $component = Livewire::test('pages::game')
         ->set('playerName', 'Josh')
@@ -116,7 +145,7 @@ it('records a finished round with the computed delta', function () {
 });
 
 it('ignores results with a stale token', function () {
-    fakeStatuses('hibernating');
+    fakeStatuses('running');
 
     Livewire::test('pages::game')
         ->set('playerName', 'Josh')
@@ -130,7 +159,7 @@ it('ignores results with a stale token', function () {
 });
 
 it('ignores results when no round is active', function () {
-    fakeStatuses('hibernating');
+    fakeStatuses('running');
 
     Livewire::test('pages::game')
         ->call('recordResult', 123, 1500);
@@ -139,7 +168,7 @@ it('ignores results when no round is active', function () {
 });
 
 it('voids a round on timeout without persisting anything', function () {
-    fakeStatuses('hibernating');
+    fakeStatuses('running');
 
     $component = Livewire::test('pages::game')
         ->set('playerName', 'Josh')
@@ -157,7 +186,7 @@ it('voids a round on timeout without persisting anything', function () {
 });
 
 it('shows the closest guesses on the leaderboard', function () {
-    fakeStatuses('hibernating');
+    fakeStatuses('running');
 
     Round::factory()->create(['player_name' => 'Closest', 'delta_ms' => 5]);
     Round::factory()->create(['player_name' => 'Middle', 'delta_ms' => 500]);
@@ -168,7 +197,7 @@ it('shows the closest guesses on the leaderboard', function () {
 });
 
 it('cannot select a target while a round is active', function () {
-    fakeStatuses('hibernating', 'hibernating');
+    fakeStatuses('running', 'running');
 
     Livewire::test('pages::game')
         ->set('playerName', 'Josh')

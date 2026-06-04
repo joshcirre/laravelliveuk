@@ -34,6 +34,20 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Wake Cooldown
+    |--------------------------------------------------------------------------
+    |
+    | The Cloud API does not reliably report scale-to-zero sleep, so the game
+    | tracks wake-ups itself. A target only becomes playable again once this
+    | many seconds have passed since it was last clicked, giving the platform
+    | time to put it back to sleep.
+    |
+    */
+
+    'wake_cooldown' => env('GAME_WAKE_COOLDOWN', 90),
+
+    /*
+    |--------------------------------------------------------------------------
     | Target Applications
     |--------------------------------------------------------------------------
     |

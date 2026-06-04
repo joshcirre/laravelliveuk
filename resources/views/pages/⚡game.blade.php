@@ -2,6 +2,7 @@
 
 use App\Models\Round;
 use App\Services\LaravelCloud;
+use App\Services\WakeTracker;
 use Illuminate\Support\Collection;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Title;
@@ -39,17 +40,29 @@ new #[Title('Guess the Cold Start')] class extends Component
     }
 
     /**
-     * Get every configured target merged with its current Cloud status.
+     * Get every configured target merged with its Cloud status and cooldown state.
+     *
+     * The Cloud API does not reliably report scale-to-zero sleep, so playability
+     * is driven by the wake cooldown that the game tracks itself. The API status
+     * is only used to block targets that are deploying or stopped.
      */
     #[Computed]
     public function targets(): Collection
     {
         $statuses = app(LaravelCloud::class)->statuses();
+        $tracker = app(WakeTracker::class);
 
-        return collect(config('game.targets'))->map(fn (array $target): array => [
-            ...$target,
-            'status' => $statuses[$target['environment_id']] ?? LaravelCloud::STATUS_UNKNOWN,
-        ]);
+        return collect(config('game.targets'))->map(function (array $target) use ($statuses, $tracker): array {
+            $status = $statuses[$target['environment_id']] ?? LaravelCloud::STATUS_UNKNOWN;
+            $cooldown = $tracker->secondsUntilReady($target['environment_id']);
+
+            return [
+                ...$target,
+                'status' => $status,
+                'cooldown' => $cooldown,
+                'playable' => $cooldown === 0 && ! in_array($status, ['deploying', 'stopped']),
+            ];
+        });
     }
 
     #[Computed]
@@ -86,11 +99,24 @@ new #[Title('Guess the Cold Start')] class extends Component
             return;
         }
 
-        if (app(LaravelCloud::class)->freshStatus($target) !== LaravelCloud::STATUS_HIBERNATING) {
-            $this->addError('selectedEnvId', 'That app is awake right now — give it a minute to fall back asleep.');
+        $status = app(LaravelCloud::class)->statuses()[$target['environment_id']] ?? LaravelCloud::STATUS_UNKNOWN;
+
+        if (in_array($status, ['deploying', 'stopped'])) {
+            $this->addError('selectedEnvId', "That app is {$status} right now — pick another one.");
 
             return;
         }
+
+        $tracker = app(WakeTracker::class);
+
+        if (! $tracker->isReady($target['environment_id'])) {
+            $seconds = $tracker->secondsUntilReady($target['environment_id']);
+            $this->addError('selectedEnvId', "That app was woken recently — ready again in about {$seconds} seconds.");
+
+            return;
+        }
+
+        $tracker->markWoken($target['environment_id']);
 
         $this->lastResult = null;
         $this->notice = null;
@@ -176,14 +202,12 @@ new #[Title('Guess the Cold Start')] class extends Component
             <ul class="flex flex-col gap-2">
                 @foreach ($this->targets as $target)
                     @php
-                        $isHibernating = $target['status'] === \App\Services\LaravelCloud::STATUS_HIBERNATING;
                         $isSelected = $selectedEnvId === $target['environment_id'];
-                        $badge = match ($target['status']) {
-                            'hibernating' => 'bg-sky-500/15 text-sky-300 ring-sky-500/40',
-                            'running' => 'bg-emerald-500/15 text-emerald-300 ring-emerald-500/40',
-                            'deploying' => 'bg-amber-500/15 text-amber-300 ring-amber-500/40',
-                            'stopped' => 'bg-red-500/15 text-red-300 ring-red-500/40',
-                            default => 'bg-zinc-500/15 text-zinc-400 ring-zinc-500/40',
+                        [$label, $badge] = match (true) {
+                            $target['status'] === 'deploying' => ['deploying', 'bg-amber-500/15 text-amber-300 ring-amber-500/40'],
+                            $target['status'] === 'stopped' => ['stopped', 'bg-red-500/15 text-red-300 ring-red-500/40'],
+                            $target['cooldown'] > 0 => ["cooling {$target['cooldown']}s", 'bg-zinc-500/15 text-zinc-400 ring-zinc-500/40'],
+                            default => ['ready', 'bg-sky-500/15 text-sky-300 ring-sky-500/40'],
                         };
                     @endphp
 
@@ -191,20 +215,20 @@ new #[Title('Guess the Cold Start')] class extends Component
                         <button
                             type="button"
                             wire:click="selectTarget('{{ $target['environment_id'] }}')"
-                            @disabled($roundActive || ! $isHibernating)
+                            @disabled($roundActive || ! $target['playable'])
                             class="flex w-full items-center justify-between gap-2 rounded-xl border px-3 py-3 text-left transition
                                 {{ $isSelected ? 'border-sky-400 bg-sky-500/10' : 'border-zinc-800 bg-zinc-900' }}
-                                {{ $isHibernating && ! $roundActive ? 'cursor-pointer hover:border-sky-500/60' : 'opacity-50' }}"
+                                {{ $target['playable'] && ! $roundActive ? 'cursor-pointer hover:border-sky-500/60' : 'opacity-50' }}"
                         >
                             <span class="text-sm font-medium">{{ $target['name'] }}</span>
                             <span class="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-semibold tracking-wide uppercase ring-1 {{ $badge }}">
-                                @if ($isHibernating)
+                                @if ($target['playable'])
                                     <span class="relative flex size-1.5">
                                         <span class="absolute inline-flex size-full animate-ping rounded-full bg-sky-400 opacity-75"></span>
                                         <span class="relative inline-flex size-1.5 rounded-full bg-sky-400"></span>
                                     </span>
                                 @endif
-                                {{ $target['status'] }}
+                                {{ $label }}
                             </span>
                         </button>
                     </li>
@@ -215,7 +239,7 @@ new #[Title('Guess the Cold Start')] class extends Component
                 <p class="text-sm text-red-400">{{ $message }}</p>
             @enderror
 
-            <p class="mt-auto text-xs text-zinc-600">Only <span class="text-sky-400">hibernating</span> apps are playable. Apps fall back asleep about a minute after waking.</p>
+            <p class="mt-auto text-xs text-zinc-600">An app is <span class="text-sky-400">ready</span> once nobody has clicked it for {{ config('game.wake_cooldown') }} seconds — that's how long Laravel Cloud needs to put it back to sleep.</p>
         </section>
 
         {{-- Stage --}}
@@ -261,7 +285,7 @@ new #[Title('Guess the Cold Start')] class extends Component
             </form>
 
             @if ($notice)
-                <div class="rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-300">{{ $notice }}</div>
+                <div wire:key="round-notice" class="rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-300">{{ $notice }}</div>
             @endif
 
             @if ($lastResult)
@@ -273,7 +297,7 @@ new #[Title('Guess the Cold Start')] class extends Component
                         default => '🐢 Better luck next time!',
                     };
                 @endphp
-                <div class="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-sky-500/40 bg-sky-500/10 px-4 py-3">
+                <div wire:key="round-result" class="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-sky-500/40 bg-sky-500/10 px-4 py-3">
                     <p class="text-sm">
                         <span class="font-bold">{{ $lastResult['player_name'] }}</span> guessed
                         <span class="font-mono font-bold">{{ number_format($lastResult['guess_ms']) }} ms</span> —
@@ -284,7 +308,7 @@ new #[Title('Guess the Cold Start')] class extends Component
                 </div>
             @endif
 
-            <div wire:ignore class="flex flex-1 flex-col gap-4 rounded-2xl border border-zinc-800 bg-zinc-900/60 p-4">
+            <div wire:ignore wire:key="cold-start-stage" class="flex flex-1 flex-col gap-4 rounded-2xl border border-zinc-800 bg-zinc-900/60 p-4">
                 <div class="flex items-baseline justify-center py-2">
                     <span id="cold-start-stopwatch" class="font-mono text-7xl font-bold tracking-tight tabular-nums">0 ms</span>
                 </div>
