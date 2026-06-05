@@ -43,6 +43,6 @@ class WakeTracker
      */
     protected function cacheKey(string $environmentId): string
     {
-        return "cold-start:last-woken:{$environmentId}";
+        return "scale-to-zero:last-woken:{$environmentId}";
     }
 }

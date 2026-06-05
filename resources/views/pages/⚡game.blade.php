@@ -8,7 +8,7 @@ use Livewire\Attributes\Computed;
 use Livewire\Attributes\Title;
 use Livewire\Component;
 
-new #[Title('Guess the Cold Start')] class extends Component
+new #[Title('Guess the Scale to Zero')] class extends Component
 {
     public string $playerName = '';
 
@@ -184,17 +184,17 @@ new #[Title('Guess the Cold Start')] class extends Component
 
 <div class="relative isolate h-dvh overflow-hidden">
     {{-- Stage: full-bleed dot grid, the waking app, and the stopwatch --}}
-    <div wire:ignore wire:key="cold-start-stage" class="absolute inset-0">
+    <div wire:ignore wire:key="wake-stage" class="absolute inset-0">
         <div class="absolute inset-0 bg-[radial-gradient(var(--color-slate-200)_1px,transparent_1px)] [background-size:8px_8px]"></div>
 
         <iframe
-            id="cold-start-frame"
-            title="Cold start preview"
+            id="wake-frame"
+            title="Scale to zero preview"
             class="absolute inset-0 size-full bg-white opacity-0 transition-opacity duration-300"
         ></iframe>
 
         <div class="pointer-events-none absolute top-6 left-1/2 z-10 -translate-x-1/2">
-            <div id="cold-start-stopwatch" class="rounded-full bg-white px-6 py-2.5 font-mono text-4xl font-semibold tracking-tight tabular-nums shadow-md ring-1 ring-black/5">0 ms</div>
+            <div id="wake-stopwatch" class="rounded-full bg-white px-6 py-2.5 font-mono text-4xl font-semibold tracking-tight tabular-nums shadow-md ring-1 ring-black/5">0 ms</div>
         </div>
 
         <div class="pointer-events-none absolute bottom-6 left-6 z-10 max-lg:hidden">
@@ -207,8 +207,8 @@ new #[Title('Guess the Cold Start')] class extends Component
         <div class="w-full max-w-md rounded-3xl bg-white/60 p-1.5 shadow-2xl ring-1 ring-black/5 backdrop-blur-sm">
             <div class="flex flex-col gap-5 rounded-2xl bg-white p-6 shadow-xs ring-1 ring-black/5">
                 <div class="flex flex-col gap-2">
-                    <h1 class="text-2xl font-semibold tracking-tight text-balance">Guess the <span class="font-serif italic">cold start</span> ❄️</h1>
-                    <p class="text-sm text-pretty text-slate-500">A hibernating Laravel Cloud app is about to wake up. Guess how many milliseconds it takes to scale from zero — closest guess wins.</p>
+                    <h1 class="text-2xl font-semibold tracking-tight text-balance">Guess the <span class="font-serif italic">scale to zero</span> 💤</h1>
+                    <p class="text-sm text-pretty text-slate-500">A Laravel Cloud app has scaled to zero. Guess how many milliseconds the full stack takes to wake when the first request lands — closest guess wins.</p>
                 </div>
 
                 @if ($notice)
@@ -286,7 +286,7 @@ new #[Title('Guess the Cold Start')] class extends Component
                             <span class="absolute inline-flex size-full animate-ping rounded-full bg-emerald-400 opacity-75"></span>
                             <span class="relative inline-flex size-2 rounded-full bg-emerald-500"></span>
                         </span>
-                        An app is hibernating and ready to wake
+                        An app is scaled to zero and ready to wake
                     @elseif ($this->nextReadySeconds !== null && $this->nextReadySeconds > 0)
                         <span class="inline-flex size-2 rounded-full bg-amber-400"></span>
                         Every app is recovering — next one ready in ~{{ $this->nextReadySeconds }}s
@@ -341,8 +341,8 @@ new #[Title('Guess the Cold Start')] class extends Component
 </div>
 
 <script>
-    const frame = document.getElementById('cold-start-frame');
-    const stopwatch = document.getElementById('cold-start-stopwatch');
+    const frame = document.getElementById('wake-frame');
+    const stopwatch = document.getElementById('wake-stopwatch');
 
     let raf = null;
     let abortActiveRound = null;
@@ -353,11 +353,12 @@ new #[Title('Guess the Cold Start')] class extends Component
         }
 
         // Blank the stage immediately so the previous round's page disappears.
-        // The frame is revealed again once the target app finishes loading.
+        // The frame is revealed again once the page finishes rendering.
         frame.classList.add('opacity-0');
 
         const start = performance.now();
-        let finished = false;
+        const cacheBust = url.includes('?') ? '&' : '?';
+        let stopped = false;
 
         const render = (ms) => {
             stopwatch.textContent = `${Math.round(ms).toLocaleString()} ms`;
@@ -368,25 +369,31 @@ new #[Title('Guess the Cold Start')] class extends Component
             raf = requestAnimationFrame(tick);
         };
 
-        const teardown = () => {
-            finished = true;
+        // Stop the clock the moment the server first responds — the app is
+        // awake — not when the page and all of its assets finish loading.
+        const stopClock = (ms) => {
+            if (stopped) return null;
+            stopped = true;
             cancelAnimationFrame(raf);
             clearTimeout(timeout);
-            frame.removeEventListener('load', onLoad);
             window.removeEventListener('message', onMessage);
-            abortActiveRound = null;
+            render(ms);
+            return Math.round(ms);
         };
 
-        // Once the app is awake, time a few warm requests and report the fastest
-        // as the network round-trip — it shows how much of the wake was latency.
+        // The app is awake once it has responded, so time a few static-file
+        // requests — no framework involved — and report the fastest as the
+        // network round-trip share of the wake.
         const measureLatency = async () => {
+            const pingUrl = new URL('/favicon.ico', url);
             let best = null;
 
             for (let i = 0; i < 3; i++) {
+                pingUrl.search = 'ping=' + token + '-' + i;
                 const t0 = performance.now();
 
                 try {
-                    await fetch(url, { mode: 'no-cors', cache: 'no-store' });
+                    await fetch(pingUrl, { mode: 'no-cors', cache: 'no-store' });
                 } catch (error) {
                     return null;
                 }
@@ -398,26 +405,43 @@ new #[Title('Guess the Cold Start')] class extends Component
             return Math.round(best);
         };
 
-        const finish = async (ms) => {
-            if (finished) return;
-            teardown();
-            frame.classList.remove('opacity-0');
-            render(ms);
+        const record = async (ms) => {
+            const wakeMs = stopClock(ms);
+
+            if (wakeMs === null) {
+                return;
+            }
+
             const latency = await measureLatency();
-            $wire.recordResult(token, Math.round(ms), latency);
+            $wire.recordResult(token, wakeMs, latency);
         };
 
-        // Primary stop: the iframe finished loading. Optional earlier stop: the
-        // target app posts a first-paint message to its parent window.
-        const onLoad = () => finish(performance.now() - start);
+        const teardown = () => {
+            stopped = true;
+            cancelAnimationFrame(raf);
+            clearTimeout(timeout);
+            frame.removeEventListener('load', onLoad);
+            window.removeEventListener('message', onMessage);
+            abortActiveRound = null;
+        };
+
+        // The iframe load only reveals the rendered page — and acts as the
+        // fallback clock stop if the probe request failed.
+        const onLoad = () => {
+            frame.removeEventListener('load', onLoad);
+            frame.classList.remove('opacity-0');
+            record(performance.now() - start);
+        };
+
+        // Optional earlier stop: the app posts first-paint to its parent.
         const onMessage = (event) => {
             if (event.data?.type === 'first-paint') {
-                finish(performance.now() - start);
+                record(performance.now() - start);
             }
         };
 
         const timeout = setTimeout(() => {
-            if (finished) return;
+            if (stopped) return;
             teardown();
             frame.src = 'about:blank';
             $wire.voidRound(token);
@@ -429,7 +453,14 @@ new #[Title('Guess the Cold Start')] class extends Component
         window.addEventListener('message', onMessage);
 
         render(0);
-        frame.src = url + (url.includes('?') ? '&' : '?') + 'cs=' + token;
+        frame.src = url + cacheBust + 'cs=' + token;
+
+        // Primary clock stop: this probe resolves as soon as response headers
+        // arrive, which is the moment the app has scaled up from zero.
+        fetch(url + cacheBust + 'cs=' + token + '-probe', { mode: 'no-cors', cache: 'no-store' })
+            .then(() => record(performance.now() - start))
+            .catch(() => { /* the iframe load stops the clock instead */ });
+
         raf = requestAnimationFrame(tick);
     });
 </script>

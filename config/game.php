@@ -10,8 +10,9 @@ return [
     | The API token is created in the Laravel Cloud dashboard under your
     | organization settings. It is used to poll the status of each target
     | environment. Status checks are disabled by default because the API
-    | currently reports hibernating environments as "running", so the calls
-    | only add latency. Flip the flag once the API reports real statuses.
+    | currently reports environments that scaled to zero as "running", so
+    | the calls only add latency. Flip the flag once the API reports real
+    | statuses.
     |
     */
 
@@ -57,7 +58,7 @@ return [
     | Target Applications
     |--------------------------------------------------------------------------
     |
-    | The hibernating Laravel Cloud applications players race against. Each
+    | The scale-to-zero Laravel Cloud applications players race against. Each
     | target needs its public URL plus the application and environment IDs
     | from the Laravel Cloud API.
     |

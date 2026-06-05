@@ -1,11 +1,17 @@
 {
-    "mcpServers": {
-        "laravel-boost": {
-            "command": "php",
-            "args": [
-                "artisan",
-                "boost:mcp"
-            ]
-        }
+  "mcpServers": {
+    "laravel-boost": {
+      "command": "php",
+      "args": [
+        "artisan",
+        "boost:mcp"
+      ]
+    },
+    "uidotsh": {
+      "url": "https://ui.sh/mcp?agent=cursor",
+      "headers": {
+        "Authorization": "Bearer FVT5Z3uqw7aRJi4rMGo6CEeS8lGCDPcY"
+      }
     }
+  }
 }

@@ -1,3 +1,10 @@
 [mcp_servers.laravel-boost]
 command = "php"
 args = ["artisan", "boost:mcp"]
+
+[mcp_servers.uidotsh]
+url = "https://ui.sh/mcp?agent=codex"
+http_headers = { Authorization = "Bearer FVT5Z3uqw7aRJi4rMGo6CEeS8lGCDPcY" }
+
+[mcp_servers.uidotsh.tools.uidotsh_fetch]
+approval_mode = "approve"

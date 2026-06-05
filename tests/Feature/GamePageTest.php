@@ -47,7 +47,7 @@ it('renders the game page with app readiness', function () {
     $this->get('/')
         ->assertSuccessful()
         ->assertSee('Guess the')
-        ->assertSee('cold start')
+        ->assertSee('scale to zero')
         ->assertSee('ready to wake');
 });
 

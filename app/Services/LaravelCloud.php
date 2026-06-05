@@ -14,11 +14,6 @@ class LaravelCloud
     public const string STATUS_UNKNOWN = 'unknown';
 
     /**
-     * The status an environment must report for a round to begin.
-     */
-    public const string STATUS_HIBERNATING = 'hibernating';
-
-    /**
      * Get the cached status of every configured target, keyed by environment ID.
      *
      * When status checks are disabled, every target reports unknown without
