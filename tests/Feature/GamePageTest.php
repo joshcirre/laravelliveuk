@@ -191,9 +191,10 @@ it('records a finished round with the computed delta', function () {
     $component->call('recordResult', $token, 1500, 95)
         ->assertSet('roundActive', false)
         ->assertSet('roundToken', null)
-        ->assertSee('scaled from zero in 1,500 ms')
-        ->assertSee('off by 300 ms')
-        ->assertSee('Includes ~95 ms of round-trip latency');
+        ->assertSee('woke from sleep in 1,405 ms')
+        ->assertSee('off by 205 ms')
+        ->assertSee('Full cold response was 1,500 ms')
+        ->assertSee('stripped ~95 ms');
 
     $round = Round::sole();
 
@@ -202,9 +203,29 @@ it('records a finished round with the computed delta', function () {
         ->target_name->toBe('App One')
         ->target_url->toBe('https://app-one.test')
         ->guess_ms->toBe(1200)
-        ->actual_ms->toBe(1500)
+        ->actual_ms->toBe(1405)
+        ->cold_ms->toBe(1500)
         ->latency_ms->toBe(95)
-        ->delta_ms->toBe(300);
+        ->delta_ms->toBe(205);
+});
+
+it('dispatches round-complete and resets to a blank form on new guess', function () {
+    fakeStatuses('running');
+
+    $component = Livewire::test('pages::game')
+        ->set('playerName', 'Josh')
+        ->set('guessMs', 1200)
+        ->call('startRound');
+
+    $component->call('recordResult', $component->get('roundToken'), 1500, 95)
+        ->assertDispatched('round-complete');
+
+    $component->call('newGuess')
+        ->assertSet('lastResult', null)
+        ->assertSet('playerName', '')
+        ->assertSet('guessMs', null)
+        ->assertSee('Wake an app')
+        ->assertDontSee('woke from sleep');
 });
 
 it('records a round without latency when the measurement fails', function () {
@@ -216,9 +237,13 @@ it('records a round without latency when the measurement fails', function () {
         ->call('startRound');
 
     $component->call('recordResult', $component->get('roundToken'), 1500)
-        ->assertDontSee('round-trip latency');
+        ->assertSee('woke from sleep in 1,500 ms')
+        ->assertDontSee('Full cold response');
 
-    expect(Round::sole()->latency_ms)->toBeNull();
+    expect(Round::sole())
+        ->latency_ms->toBeNull()
+        ->actual_ms->toBe(1500)
+        ->cold_ms->toBe(1500);
 });
 
 it('caps a reported latency at the actual wake time', function () {

@@ -19,6 +19,7 @@ class RoundFactory extends Factory
     {
         $guess = fake()->numberBetween(50, 8000);
         $actual = fake()->numberBetween(50, 8000);
+        $latency = fake()->numberBetween(20, 250);
 
         return [
             'player_name' => fake()->firstName(),
@@ -26,7 +27,8 @@ class RoundFactory extends Factory
             'target_url' => fake()->url(),
             'guess_ms' => $guess,
             'actual_ms' => $actual,
-            'latency_ms' => fake()->numberBetween(20, 250),
+            'cold_ms' => $actual + $latency,
+            'latency_ms' => $latency,
             'delta_ms' => abs($guess - $actual),
         ];
     }

@@ -9,7 +9,7 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 
-#[Fillable(['player_name', 'target_name', 'target_url', 'guess_ms', 'actual_ms', 'latency_ms', 'delta_ms'])]
+#[Fillable(['player_name', 'target_name', 'target_url', 'guess_ms', 'actual_ms', 'cold_ms', 'latency_ms', 'delta_ms'])]
 class Round extends Model
 {
     /** @use HasFactory<RoundFactory> */
@@ -25,6 +25,7 @@ class Round extends Model
         return [
             'guess_ms' => 'integer',
             'actual_ms' => 'integer',
+            'cold_ms' => 'integer',
             'latency_ms' => 'integer',
             'delta_ms' => 'integer',
         ];
@@ -37,14 +38,5 @@ class Round extends Model
     protected function closest(Builder $query): void
     {
         $query->orderBy('delta_ms')->orderBy('created_at');
-    }
-
-    /**
-     * Scope the query to the most recent rounds first.
-     */
-    #[Scope]
-    protected function recent(Builder $query): void
-    {
-        $query->latest('id');
     }
 }

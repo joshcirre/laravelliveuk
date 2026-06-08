@@ -20,7 +20,7 @@ new #[Title('Guess the Scale to Zero')] class extends Component
 
     public ?string $activeEnvId = null;
 
-    /** @var array{player_name: string, target_name: string, guess_ms: int, actual_ms: int, latency_ms: int|null, delta_ms: int}|null */
+    /** @var array{player_name: string, target_name: string, guess_ms: int, actual_ms: int, cold_ms: int|null, latency_ms: int|null, delta_ms: int}|null */
     public ?array $lastResult = null;
 
     public ?string $notice = null;
@@ -87,12 +87,6 @@ new #[Title('Guess the Scale to Zero')] class extends Component
         return Round::closest()->limit(10)->get();
     }
 
-    #[Computed]
-    public function recentRounds(): Collection
-    {
-        return Round::recent()->limit(8)->get();
-    }
-
     public function startRound(): void
     {
         if ($this->roundActive) {
@@ -130,7 +124,15 @@ new #[Title('Guess the Scale to Zero')] class extends Component
         );
     }
 
-    public function recordResult(int $token, int $actualMs, ?int $latencyMs = null): void
+    /**
+     * Record a finished round.
+     *
+     * The browser reports the cold first-response time and a warm baseline
+     * measured straight afterwards. Subtracting the baseline strips out the
+     * network round-trip, Cloud edge hop, and the app's steady-state request
+     * cost, leaving the wake-from-sleep time itself — the number players guess.
+     */
+    public function recordResult(int $token, int $coldMs, ?int $latencyMs = null): void
     {
         if (! $this->roundActive || $token !== $this->roundToken) {
             return;
@@ -138,18 +140,33 @@ new #[Title('Guess the Scale to Zero')] class extends Component
 
         $target = $this->findTarget($this->activeEnvId);
 
+        $baselineMs = $latencyMs !== null ? min(max($latencyMs, 0), $coldMs) : null;
+        $wakeMs = $baselineMs !== null ? $coldMs - $baselineMs : $coldMs;
+
         $round = Round::create([
             'player_name' => $this->playerName,
             'target_name' => $target['name'],
             'target_url' => $target['url'],
             'guess_ms' => $this->guessMs,
-            'actual_ms' => $actualMs,
-            'latency_ms' => $latencyMs !== null ? min(max($latencyMs, 0), $actualMs) : null,
-            'delta_ms' => abs($this->guessMs - $actualMs),
+            'actual_ms' => $wakeMs,
+            'cold_ms' => $coldMs,
+            'latency_ms' => $baselineMs,
+            'delta_ms' => abs($this->guessMs - $wakeMs),
         ]);
 
-        $this->lastResult = $round->only(['player_name', 'target_name', 'guess_ms', 'actual_ms', 'latency_ms', 'delta_ms']);
+        $this->lastResult = $round->only(['player_name', 'target_name', 'guess_ms', 'actual_ms', 'cold_ms', 'latency_ms', 'delta_ms']);
         $this->finishRound();
+
+        $this->dispatch('round-complete');
+    }
+
+    /**
+     * Clear the result and form so the next person starts from a blank slate.
+     */
+    public function newGuess(): void
+    {
+        $this->reset(['lastResult', 'playerName', 'guessMs', 'notice']);
+        $this->resetErrorBag();
     }
 
     public function voidRound(int $token): void
@@ -193,8 +210,8 @@ new #[Title('Guess the Scale to Zero')] class extends Component
             class="absolute inset-0 size-full bg-white opacity-0 transition-opacity duration-300"
         ></iframe>
 
-        <div class="pointer-events-none absolute top-6 left-1/2 z-10 -translate-x-1/2">
-            <div id="wake-stopwatch" class="rounded-full bg-white px-6 py-2.5 font-mono text-4xl font-semibold tracking-tight tabular-nums shadow-md ring-1 ring-black/5">0 ms</div>
+        <div class="pointer-events-none absolute top-5 left-1/2 z-10 -translate-x-1/2 md:top-8">
+            <div id="wake-stopwatch" class="rounded-full bg-white px-6 py-2.5 font-mono text-4xl font-semibold tracking-tight tabular-nums shadow-md ring-1 ring-black/5 md:px-8 md:py-3 md:text-5xl xl:text-6xl">0 ms</div>
         </div>
 
         <div class="pointer-events-none absolute bottom-6 left-6 z-10 max-lg:hidden">
@@ -203,16 +220,18 @@ new #[Title('Guess the Scale to Zero')] class extends Component
     </div>
 
     {{-- Start / result overlay: fades away while the run is live --}}
-    <div class="absolute inset-0 z-20 grid place-items-center p-6 transition-opacity duration-500 {{ $roundActive ? 'pointer-events-none opacity-0' : '' }}">
-        <div class="w-full max-w-md rounded-3xl bg-white/60 p-1.5 shadow-2xl ring-1 ring-black/5 backdrop-blur-sm">
-            <div class="flex flex-col gap-5 rounded-2xl bg-white p-6 shadow-xs ring-1 ring-black/5">
-                <div class="flex flex-col gap-2">
-                    <h1 class="text-2xl font-semibold tracking-tight text-balance">Guess the <span class="font-serif italic">scale to zero</span> 💤</h1>
-                    <p class="text-sm text-pretty text-slate-500">A Laravel Cloud app has scaled to zero. Guess how many milliseconds the full stack takes to wake when the first request lands — closest guess wins.</p>
+    <div class="absolute inset-0 z-20 grid place-items-center p-4 pt-24 transition-opacity duration-500 sm:p-6 md:pt-32 lg:pr-[23rem] xl:pr-[28rem] {{ $roundActive ? 'pointer-events-none opacity-0' : '' }}">
+        <div class="w-full max-w-md rounded-3xl bg-white/60 p-1.5 shadow-2xl ring-1 ring-black/5 backdrop-blur-sm sm:max-w-lg xl:max-w-2xl">
+            <div class="flex flex-col gap-5 rounded-2xl bg-white p-6 shadow-xs ring-1 ring-black/5 md:gap-6 md:p-8 xl:p-10">
+                <div class="flex flex-col gap-2.5">
+                    <h1 class="text-2xl font-semibold tracking-tight text-balance md:text-3xl xl:text-5xl">Guess the <span class="font-serif italic">scale to zero</span> 💤</h1>
+                    @unless ($lastResult)
+                        <p class="text-sm text-pretty text-slate-500 md:text-base xl:text-lg">A Laravel Cloud app has scaled to zero. Guess how many milliseconds it takes to wake — we subtract network and steady-state latency so it's purely the cold start. Closest guess wins.</p>
+                    @endunless
                 </div>
 
                 @if ($notice)
-                    <div wire:key="round-notice" class="rounded-xl bg-amber-50 px-4 py-3 text-sm text-amber-700 ring-1 ring-amber-600/20">{{ $notice }}</div>
+                    <div wire:key="round-notice" class="rounded-xl bg-amber-50 px-4 py-3 text-sm text-amber-700 ring-1 ring-amber-600/20 md:text-base">{{ $notice }}</div>
                 @endif
 
                 @if ($lastResult)
@@ -224,63 +243,73 @@ new #[Title('Guess the Scale to Zero')] class extends Component
                             default => '🐢 Better luck next time!',
                         };
                     @endphp
-                    <div wire:key="round-result" class="flex flex-col gap-1.5 rounded-xl bg-cloud/4 px-4 py-3.5 ring-1 ring-cloud/15">
-                        <p class="text-sm font-medium text-cloud">{{ $verdict }}</p>
-                        <p class="font-semibold tracking-tight text-balance">Laravel Cloud scaled from zero in {{ number_format($lastResult['actual_ms']) }} ms</p>
-                        <p class="text-sm text-slate-500">{{ $lastResult['player_name'] }} guessed {{ number_format($lastResult['guess_ms']) }} ms — off by {{ number_format($lastResult['delta_ms']) }} ms.</p>
-                        @if (($lastResult['latency_ms'] ?? null) !== null)
-                            <p class="text-sm text-slate-400">Includes ~{{ number_format($lastResult['latency_ms']) }} ms of round-trip latency to our {{ config('game.server_region') }} server.</p>
+                    <div wire:key="round-result" class="flex flex-col gap-2 rounded-xl bg-cloud/4 px-4 py-3.5 ring-1 ring-cloud/15 md:px-5 md:py-4">
+                        <p class="text-sm font-medium text-cloud md:text-base">{{ $verdict }}</p>
+                        <p class="font-semibold tracking-tight text-balance md:text-lg xl:text-xl">Laravel Cloud woke from sleep in {{ number_format($lastResult['actual_ms']) }} ms</p>
+                        <p class="text-sm text-slate-500 md:text-base">{{ $lastResult['player_name'] }} guessed {{ number_format($lastResult['guess_ms']) }} ms — off by {{ number_format($lastResult['delta_ms']) }} ms.</p>
+                        @if (($lastResult['cold_ms'] ?? null) !== null && ($lastResult['latency_ms'] ?? null) !== null)
+                            <p class="text-sm text-slate-400">Full cold response was {{ number_format($lastResult['cold_ms']) }} ms — we stripped ~{{ number_format($lastResult['latency_ms']) }} ms of round-trip and steady-state server time so this is just the wake.</p>
                         @endif
-                    </div>
-                @endif
-
-                <form wire:submit="startRound" class="flex flex-col gap-4">
-                    <div class="flex flex-col gap-1.5">
-                        <label for="player-name" class="text-sm font-medium text-slate-700">Your name</label>
-                        <input
-                            id="player-name"
-                            name="player_name"
-                            type="text"
-                            wire:model="playerName"
-                            placeholder="Taylor"
-                            class="h-10 w-full rounded-md border border-black/10 bg-white px-3 text-sm placeholder:text-slate-400 hover:border-black/20 focus:border-cloud focus:ring-[3px] focus:ring-cloud/15 focus:outline-hidden max-sm:text-base"
-                        />
-                        @error('playerName')
-                            <p class="text-sm text-red-600">{{ $message }}</p>
-                        @enderror
-                    </div>
-
-                    <div class="flex flex-col gap-1.5">
-                        <label for="guess-ms" class="text-sm font-medium text-slate-700">Your guess (ms)</label>
-                        <input
-                            id="guess-ms"
-                            name="guess_ms"
-                            type="number"
-                            min="1"
-                            wire:model="guessMs"
-                            placeholder="413"
-                            class="h-10 w-full rounded-md border border-black/10 bg-white px-3 font-mono text-sm tabular-nums placeholder:text-slate-400 hover:border-black/20 focus:border-cloud focus:ring-[3px] focus:ring-cloud/15 focus:outline-hidden max-sm:text-base"
-                        />
-                        @error('guessMs')
-                            <p class="text-sm text-red-600">{{ $message }}</p>
-                        @enderror
                     </div>
 
                     <button
-                        type="submit"
-                        @disabled($roundActive)
-                        class="h-10 rounded-md bg-cloud px-4 text-sm font-medium text-white transition-colors hover:bg-cloud/90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cloud disabled:cursor-not-allowed disabled:opacity-50"
+                        type="button"
+                        wire:click="newGuess"
+                        x-on:click="window.cancelGuessReset?.()"
+                        class="h-11 rounded-md bg-cloud px-4 text-sm font-medium text-white transition-colors hover:bg-cloud/90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cloud md:h-12 md:text-base xl:h-14 xl:text-lg"
                     >
-                        <span wire:loading.remove wire:target="startRound">{{ $lastResult ? 'Go again' : 'Wake an app' }}</span>
-                        <span wire:loading wire:target="startRound">Waking…</span>
+                        New guess
                     </button>
+                    <p class="text-center text-xs text-slate-400 md:text-sm">Resetting for the next player in 5 seconds…</p>
+                @else
+                    <form wire:submit="startRound" class="grid gap-4 xl:grid-cols-2">
+                        <div class="flex flex-col gap-1.5">
+                            <label for="player-name" class="text-sm font-medium text-slate-700 xl:text-base">Your name</label>
+                            <input
+                                id="player-name"
+                                name="player_name"
+                                type="text"
+                                wire:model="playerName"
+                                placeholder="Taylor"
+                                class="h-11 w-full rounded-md border border-black/10 bg-white px-3 text-sm placeholder:text-slate-400 hover:border-black/20 focus:border-cloud focus:ring-[3px] focus:ring-cloud/15 focus:outline-hidden max-sm:text-base md:h-12 md:text-base xl:h-14 xl:px-4 xl:text-lg"
+                            />
+                            @error('playerName')
+                                <p class="text-sm text-red-600">{{ $message }}</p>
+                            @enderror
+                        </div>
 
-                    @error('round')
-                        <p class="text-sm text-red-600">{{ $message }}</p>
-                    @enderror
-                </form>
+                        <div class="flex flex-col gap-1.5">
+                            <label for="guess-ms" class="text-sm font-medium text-slate-700 xl:text-base">Your guess (ms)</label>
+                            <input
+                                id="guess-ms"
+                                name="guess_ms"
+                                type="number"
+                                min="1"
+                                wire:model="guessMs"
+                                placeholder="413"
+                                class="h-11 w-full rounded-md border border-black/10 bg-white px-3 font-mono text-sm tabular-nums placeholder:text-slate-400 hover:border-black/20 focus:border-cloud focus:ring-[3px] focus:ring-cloud/15 focus:outline-hidden max-sm:text-base md:h-12 md:text-base xl:h-14 xl:px-4 xl:text-lg"
+                            />
+                            @error('guessMs')
+                                <p class="text-sm text-red-600">{{ $message }}</p>
+                            @enderror
+                        </div>
 
-                <div wire:poll.5s class="flex items-center gap-2 border-t border-black/5 pt-4 text-sm text-slate-500">
+                        <button
+                            type="submit"
+                            @disabled($roundActive)
+                            class="h-11 rounded-md bg-cloud px-4 text-sm font-medium text-white transition-colors hover:bg-cloud/90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cloud disabled:cursor-not-allowed disabled:opacity-50 md:h-12 md:text-base xl:col-span-2 xl:h-14 xl:text-lg"
+                        >
+                            <span wire:loading.remove wire:target="startRound">Wake an app</span>
+                            <span wire:loading wire:target="startRound">Waking…</span>
+                        </button>
+
+                        @error('round')
+                            <p class="text-sm text-red-600">{{ $message }}</p>
+                        @enderror
+                    </form>
+                @endif
+
+                <div wire:poll.5s class="flex items-center gap-2 border-t border-black/5 pt-4 text-sm text-slate-500 md:text-base">
                     @if ($this->readyCount > 0)
                         <span class="relative flex size-2">
                             <span class="absolute inline-flex size-full animate-ping rounded-full bg-emerald-400 opacity-75"></span>
@@ -300,41 +329,22 @@ new #[Title('Guess the Scale to Zero')] class extends Component
     </div>
 
     {{-- Leaderboard overlay: always pinned to the right --}}
-    <aside class="absolute top-6 right-6 z-10 hidden max-h-[calc(100%-3rem)] w-72 flex-col gap-6 overflow-y-auto rounded-2xl bg-white/85 p-5 shadow-lg ring-1 ring-black/5 backdrop-blur-md lg:flex">
+    <aside class="absolute top-6 right-6 z-10 hidden max-h-[calc(100%-3rem)] w-80 flex-col gap-6 overflow-y-auto rounded-2xl bg-white/85 p-6 shadow-lg ring-1 ring-black/5 backdrop-blur-md lg:flex xl:top-8 xl:right-8 xl:max-h-[calc(100%-4rem)] xl:w-96 xl:gap-8 xl:p-7">
         <div>
-            <h2 class="font-mono text-xs font-medium tracking-wide text-slate-400 uppercase">Leaderboard</h2>
+            <h2 class="font-mono text-xs font-medium tracking-wide text-slate-400 uppercase xl:text-sm">Leaderboard</h2>
 
             @if ($this->leaderboard->isEmpty())
-                <p class="mt-3 text-sm text-slate-400">No rounds yet — be the first!</p>
+                <p class="mt-3 text-sm text-slate-400 xl:text-base">No rounds yet — be the first!</p>
             @else
-                <ol role="list" class="mt-3 flex flex-col gap-2">
+                <ol role="list" class="mt-3 flex flex-col gap-2.5 xl:gap-3">
                     @foreach ($this->leaderboard as $round)
-                        <li wire:key="leader-{{ $round->id }}" class="flex items-baseline gap-2.5 text-sm">
-                            <div class="w-5 font-mono text-xs text-slate-400 tabular-nums">{{ $loop->iteration }}</div>
+                        <li wire:key="leader-{{ $round->id }}" class="flex items-baseline gap-3 text-sm xl:text-base">
+                            <div class="w-6 font-mono text-xs text-slate-400 tabular-nums xl:text-sm">{{ $loop->iteration }}</div>
                             <div class="flex-1 truncate font-medium text-slate-700">{{ $round->player_name }}</div>
-                            <div class="font-mono text-xs text-cloud tabular-nums">±{{ number_format($round->delta_ms) }} ms</div>
+                            <div class="font-mono text-xs text-cloud tabular-nums xl:text-sm">±{{ number_format($round->delta_ms) }} ms</div>
                         </li>
                     @endforeach
                 </ol>
-            @endif
-        </div>
-
-        <div>
-            <h2 class="font-mono text-xs font-medium tracking-wide text-slate-400 uppercase">Recent rounds</h2>
-
-            @if ($this->recentRounds->isEmpty())
-                <p class="mt-3 text-sm text-slate-400">Nothing yet.</p>
-            @else
-                <ul role="list" class="mt-3 flex flex-col gap-2">
-                    @foreach ($this->recentRounds as $round)
-                        <li wire:key="recent-{{ $round->id }}" class="text-sm text-slate-500">
-                            <span class="font-medium text-slate-700">{{ $round->player_name }}</span>
-                            guessed <span class="font-mono">{{ number_format($round->guess_ms) }}</span>,
-                            actual <span class="font-mono">{{ number_format($round->actual_ms) }}</span>
-                            <span class="font-mono text-cloud/70">(±{{ number_format($round->delta_ms) }})</span>
-                        </li>
-                    @endforeach
-                </ul>
             @endif
         </div>
     </aside>
@@ -346,8 +356,26 @@ new #[Title('Guess the Scale to Zero')] class extends Component
 
     let raf = null;
     let abortActiveRound = null;
+    let resetTimer = null;
+
+    // Cancel a pending auto-reset so it can't wipe the next player's input.
+    window.cancelGuessReset = () => {
+        clearTimeout(resetTimer);
+        resetTimer = null;
+    };
+
+    // After a result is shown, reset to a blank form for the next player.
+    $wire.on('round-complete', () => {
+        window.cancelGuessReset();
+        resetTimer = setTimeout(() => {
+            resetTimer = null;
+            $wire.newGuess();
+        }, 5000);
+    });
 
     $wire.on('round-started', ({ token, url, timeoutMs }) => {
+        window.cancelGuessReset();
+
         if (abortActiveRound) {
             abortActiveRound();
         }
@@ -440,16 +468,25 @@ new #[Title('Guess the Scale to Zero')] class extends Component
         };
 
         const record = async (ms) => {
-            const wakeMs = stopClock(ms);
+            const coldMs = stopClock(ms);
 
-            if (wakeMs === null) {
+            if (coldMs === null) {
                 return;
             }
 
             loadPreview();
 
+            // The cold response includes the network round-trip and the app's
+            // steady-state request cost. Measuring a warm baseline straight
+            // after lets the server subtract it, leaving just the wake time.
             const latency = await measureLatency();
-            $wire.recordResult(token, wakeMs, latency);
+
+            if (latency !== null) {
+                // Snap the stopwatch to the wake time so it matches the result.
+                render(Math.max(0, coldMs - Math.min(latency, coldMs)));
+            }
+
+            $wire.recordResult(token, coldMs, latency);
         };
 
         const teardown = () => {
