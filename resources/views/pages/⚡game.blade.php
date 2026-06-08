@@ -255,12 +255,12 @@ new #[Title('Guess the Scale to Zero')] class extends Component
                     <button
                         type="button"
                         wire:click="newGuess"
-                        x-on:click="window.cancelGuessReset?.()"
+                        x-on:click="window.cancelGuessReset?.(); window.resetWakeStage?.()"
                         class="h-11 rounded-md bg-cloud px-4 text-sm font-medium text-white transition-colors hover:bg-cloud/90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cloud md:h-12 md:text-base xl:h-14 xl:text-lg"
                     >
                         New guess
                     </button>
-                    <p class="text-center text-xs text-slate-400 md:text-sm">Resetting for the next player in 5 seconds…</p>
+                    <p class="text-center text-xs text-slate-400 md:text-sm">Resetting for the next player in 10 seconds…</p>
                 @else
                     <form wire:submit="startRound" class="grid gap-4 xl:grid-cols-2">
                         <div class="flex flex-col gap-1.5">
@@ -364,13 +364,21 @@ new #[Title('Guess the Scale to Zero')] class extends Component
         resetTimer = null;
     };
 
+    // Blank the stopwatch and stage so the next player starts clean.
+    window.resetWakeStage = () => {
+        stopwatch.textContent = '0 ms';
+        frame.classList.add('opacity-0');
+        frame.src = 'about:blank';
+    };
+
     // After a result is shown, reset to a blank form for the next player.
     $wire.on('round-complete', () => {
         window.cancelGuessReset();
         resetTimer = setTimeout(() => {
             resetTimer = null;
+            window.resetWakeStage();
             $wire.newGuess();
-        }, 5000);
+        }, 10000);
     });
 
     $wire.on('round-started', ({ token, url, timeoutMs }) => {
