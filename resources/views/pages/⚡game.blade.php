@@ -356,21 +356,56 @@ new #[Title('Guess the Scale to Zero')] class extends Component
         // The frame is revealed again once the page finishes rendering.
         frame.classList.add('opacity-0');
 
-        const start = performance.now();
         const cacheBust = url.includes('?') ? '&' : '?';
+        const previewUrl = url + cacheBust + 'cs=' + token + '-preview';
+        const wakeProbeUrl = new URL('/wake', url);
+
+        wakeProbeUrl.search = 'cs=' + token + '-probe';
+
+        let start = null;
         let stopped = false;
+        let previewRequested = false;
 
         const render = (ms) => {
             stopwatch.textContent = `${Math.round(ms).toLocaleString()} ms`;
         };
 
         const tick = () => {
-            render(performance.now() - start);
+            if (start !== null) {
+                render(performance.now() - start);
+            }
+
             raf = requestAnimationFrame(tick);
         };
 
-        // Stop the clock the moment the server first responds — the app is
-        // awake — not when the page and all of its assets finish loading.
+        // Resource Timing gives us the browser's actual request/first-response
+        // boundary when the target exposes Timing-Allow-Origin. Fall back to
+        // the fetch promise timing for older deployed targets.
+        const responseHeaderMs = (resourceUrl, fallbackStart) => {
+            const entries = performance.getEntriesByName(resourceUrl);
+            const entry = entries[entries.length - 1];
+
+            if (entry?.responseStart > 0) {
+                const requestStart = entry.requestStart > 0 ? entry.requestStart : entry.startTime;
+
+                return entry.responseStart - requestStart;
+            }
+
+            return performance.now() - fallbackStart;
+        };
+
+        const loadPreview = () => {
+            if (previewRequested) {
+                return;
+            }
+
+            previewRequested = true;
+            frame.src = previewUrl;
+        };
+
+        // Stop the clock when the wake probe receives response headers. The
+        // iframe is only loaded after this point so it cannot be the request
+        // that wakes the app.
         const stopClock = (ms) => {
             if (stopped) return null;
             stopped = true;
@@ -381,11 +416,10 @@ new #[Title('Guess the Scale to Zero')] class extends Component
             return Math.round(ms);
         };
 
-        // The app is awake once it has responded, so time a few static-file
-        // requests — no framework involved — and report the fastest as the
-        // network round-trip share of the wake.
+        // The app is awake once it has responded, so time a few warm probes
+        // and report the fastest as the round-trip share of the wake.
         const measureLatency = async () => {
-            const pingUrl = new URL('/favicon.ico', url);
+            const pingUrl = new URL('/wake', url);
             let best = null;
 
             for (let i = 0; i < 3; i++) {
@@ -393,12 +427,12 @@ new #[Title('Guess the Scale to Zero')] class extends Component
                 const t0 = performance.now();
 
                 try {
-                    await fetch(pingUrl, { mode: 'no-cors', cache: 'no-store' });
+                    await fetch(pingUrl, { method: 'HEAD', mode: 'no-cors', cache: 'no-store' });
                 } catch (error) {
                     return null;
                 }
 
-                const ms = performance.now() - t0;
+                const ms = responseHeaderMs(pingUrl.href, t0);
                 best = best === null ? ms : Math.min(best, ms);
             }
 
@@ -411,6 +445,8 @@ new #[Title('Guess the Scale to Zero')] class extends Component
             if (wakeMs === null) {
                 return;
             }
+
+            loadPreview();
 
             const latency = await measureLatency();
             $wire.recordResult(token, wakeMs, latency);
@@ -430,7 +466,10 @@ new #[Title('Guess the Scale to Zero')] class extends Component
         const onLoad = () => {
             frame.removeEventListener('load', onLoad);
             frame.classList.remove('opacity-0');
-            record(performance.now() - start);
+
+            if (! stopped && start !== null) {
+                record(performance.now() - start);
+            }
         };
 
         // Optional earlier stop: the app posts first-paint to its parent.
@@ -453,14 +492,18 @@ new #[Title('Guess the Scale to Zero')] class extends Component
         window.addEventListener('message', onMessage);
 
         render(0);
-        frame.src = url + cacheBust + 'cs=' + token;
-
-        // Primary clock stop: this probe resolves as soon as response headers
-        // arrive, which is the moment the app has scaled up from zero.
-        fetch(url + cacheBust + 'cs=' + token + '-probe', { mode: 'no-cors', cache: 'no-store' })
-            .then(() => record(performance.now() - start))
-            .catch(() => { /* the iframe load stops the clock instead */ });
+        start = performance.now();
 
         raf = requestAnimationFrame(tick);
+
+        // Primary clock stop: this HEAD probe is the first request to the
+        // sleeping app and resolves when response headers arrive.
+        fetch(wakeProbeUrl.href, { method: 'HEAD', mode: 'no-cors', cache: 'no-store' })
+            .then(() => record(responseHeaderMs(wakeProbeUrl.href, start)))
+            .catch(() => {
+                if (! stopped) {
+                    loadPreview();
+                }
+            });
     });
 </script>

@@ -51,6 +51,15 @@ it('renders the game page with app readiness', function () {
         ->assertSee('ready to wake');
 });
 
+it('responds to wake probes without page content', function () {
+    $response = $this->head('/wake')
+        ->assertNoContent()
+        ->assertHeader('Access-Control-Allow-Origin', '*')
+        ->assertHeader('Timing-Allow-Origin', '*');
+
+    expect($response->headers->get('Cache-Control'))->toContain('no-store');
+});
+
 it('skips the Cloud API entirely when status checks are disabled', function () {
     config()->set('game.cloud_status_enabled', false);
 
