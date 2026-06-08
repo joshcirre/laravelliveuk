@@ -200,29 +200,22 @@ new #[Title('Guess the Scale to Zero')] class extends Component
 ?>
 
 <div class="relative isolate h-dvh overflow-hidden">
-    {{-- Stage: full-bleed dot grid, the waking app, and the stopwatch --}}
-    <div wire:ignore wire:key="wake-stage" class="absolute inset-0">
-        <div class="absolute inset-0 bg-[radial-gradient(var(--color-slate-200)_1px,transparent_1px)] [background-size:8px_8px]"></div>
+    {{-- Full-bleed dot-grid backdrop --}}
+    <div class="absolute inset-0 bg-[radial-gradient(var(--color-slate-200)_1px,transparent_1px)] [background-size:8px_8px]"></div>
 
-        <iframe
-            id="wake-frame"
-            title="Scale to zero preview"
-            class="absolute inset-0 size-full bg-white opacity-0 transition-opacity duration-300"
-        ></iframe>
-
-        <div class="pointer-events-none absolute top-5 left-1/2 z-10 -translate-x-1/2 md:top-8">
-            <div id="wake-stopwatch" class="rounded-full bg-white px-6 py-2.5 font-mono text-4xl font-semibold tracking-tight tabular-nums shadow-md ring-1 ring-black/5 md:px-8 md:py-3 md:text-5xl xl:text-6xl">0 ms</div>
-        </div>
-
-        <div class="pointer-events-none absolute bottom-6 left-6 z-10 max-lg:hidden">
-            <p class="rounded-full bg-white px-3 py-1.5 font-mono text-xs tracking-wide text-slate-500 uppercase shadow-xs ring-1 ring-black/5">Powered by Laravel Cloud</p>
-        </div>
+    <div class="pointer-events-none absolute bottom-6 left-6 z-10 max-lg:hidden">
+        <p class="rounded-full bg-white px-3 py-1.5 font-mono text-xs tracking-wide text-slate-500 uppercase shadow-xs ring-1 ring-black/5">Powered by Laravel Cloud</p>
     </div>
 
-    {{-- Start / result overlay: fades away while the run is live --}}
-    <div class="absolute inset-0 z-20 grid place-items-center p-4 pt-24 transition-opacity duration-500 sm:p-6 md:pt-32 lg:pr-[23rem] xl:pr-[28rem] {{ $roundActive ? 'pointer-events-none opacity-0' : '' }}">
-        <div class="w-full max-w-md rounded-3xl bg-white/60 p-1.5 shadow-2xl ring-1 ring-black/5 backdrop-blur-sm sm:max-w-lg xl:max-w-2xl">
-            <div class="flex flex-col gap-5 rounded-2xl bg-white p-6 shadow-xs ring-1 ring-black/5 md:gap-6 md:p-8 xl:p-10">
+    {{-- Center column: the stopwatch sits directly above the guess modal --}}
+    <div class="absolute inset-0 z-20 grid place-items-center p-4 pt-20 sm:p-6 md:pt-24 lg:pr-[23rem] xl:pr-[28rem]">
+        <div class="flex w-full max-w-md flex-col items-center gap-5 sm:max-w-lg xl:max-w-2xl xl:gap-6">
+            <div wire:ignore wire:key="wake-stopwatch-wrap">
+                <div id="wake-stopwatch" class="rounded-full bg-white px-6 py-2.5 font-mono text-4xl font-semibold tracking-tight tabular-nums shadow-md ring-1 ring-black/5 md:px-8 md:py-3 md:text-5xl xl:text-6xl">0 ms</div>
+            </div>
+
+            <div class="w-full rounded-3xl bg-white/60 p-1.5 shadow-2xl ring-1 ring-black/5 backdrop-blur-sm">
+                <div class="flex flex-col gap-5 rounded-2xl bg-white p-6 shadow-xs ring-1 ring-black/5 md:gap-6 md:p-8 xl:p-10">
                 <div class="flex flex-col gap-2.5">
                     <h1 class="text-2xl font-semibold tracking-tight text-balance md:text-3xl xl:text-5xl">Guess the <span class="font-serif italic">scale to zero</span> 💤</h1>
                     @unless ($lastResult)
@@ -323,14 +316,15 @@ new #[Title('Guess the Scale to Zero')] class extends Component
                         <span class="inline-flex size-2 rounded-full bg-slate-300"></span>
                         Waiting for an app to become available…
                     @endif
+                    </div>
                 </div>
             </div>
         </div>
     </div>
 
-    {{-- Leaderboard overlay: always pinned to the right --}}
-    <aside class="absolute top-6 right-6 z-10 hidden max-h-[calc(100%-3rem)] w-80 flex-col gap-6 overflow-y-auto rounded-2xl bg-white/85 p-6 shadow-lg ring-1 ring-black/5 backdrop-blur-md lg:flex xl:top-8 xl:right-8 xl:max-h-[calc(100%-4rem)] xl:w-96 xl:gap-8 xl:p-7">
-        <div>
+    {{-- Right column: leaderboard on top, the waking app preview below it --}}
+    <aside class="absolute top-6 right-6 bottom-6 z-10 hidden w-80 flex-col gap-6 lg:flex xl:top-8 xl:right-8 xl:bottom-8 xl:w-96 xl:gap-8">
+        <div class="overflow-y-auto rounded-2xl bg-white/85 p-6 shadow-lg ring-1 ring-black/5 backdrop-blur-md xl:p-7">
             <h2 class="font-mono text-xs font-medium tracking-wide text-slate-400 uppercase xl:text-sm">Leaderboard</h2>
 
             @if ($this->leaderboard->isEmpty())
@@ -346,6 +340,14 @@ new #[Title('Guess the Scale to Zero')] class extends Component
                     @endforeach
                 </ol>
             @endif
+        </div>
+
+        <div wire:ignore wire:key="wake-stage" class="min-h-0 flex-1 overflow-hidden rounded-2xl bg-white shadow-lg ring-1 ring-black/5">
+            <iframe
+                id="wake-frame"
+                title="Scale to zero preview"
+                class="size-full bg-white opacity-0 transition-opacity duration-300"
+            ></iframe>
         </div>
     </aside>
 </div>
