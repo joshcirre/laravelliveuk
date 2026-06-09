@@ -359,6 +359,15 @@ new #[Title('Guess the Scale to Zero')] class extends Component
     let raf = null;
     let abortActiveRound = null;
     let resetTimer = null;
+    let tweenRaf = null;
+
+    // Stop any in-flight stopwatch count-down animation.
+    const cancelTween = () => {
+        if (tweenRaf) {
+            cancelAnimationFrame(tweenRaf);
+            tweenRaf = null;
+        }
+    };
 
     // Cancel a pending auto-reset so it can't wipe the next player's input.
     window.cancelGuessReset = () => {
@@ -368,6 +377,7 @@ new #[Title('Guess the Scale to Zero')] class extends Component
 
     // Blank the stopwatch and stage so the next player starts clean.
     window.resetWakeStage = () => {
+        cancelTween();
         stopwatch.textContent = '0 ms';
         frame.classList.add('opacity-0');
         frame.src = 'about:blank';
@@ -385,6 +395,7 @@ new #[Title('Guess the Scale to Zero')] class extends Component
 
     $wire.on('round-started', ({ token, url, timeoutMs }) => {
         window.cancelGuessReset();
+        cancelTween();
 
         if (abortActiveRound) {
             abortActiveRound();
@@ -454,13 +465,12 @@ new #[Title('Guess the Scale to Zero')] class extends Component
             return Math.round(ms);
         };
 
-        // The app is awake once it has responded, so time a few warm probes
-        // and report the fastest as the round-trip share of the wake.
+        // The app is awake once it has responded, so fire a few warm probes in
+        // parallel and report the fastest as the round-trip share of the wake.
+        // Running them concurrently keeps the stopwatch from sitting frozen.
         const measureLatency = async () => {
-            const pingUrl = new URL('/wake', url);
-            let best = null;
-
-            for (let i = 0; i < 3; i++) {
+            const probe = async (i) => {
+                const pingUrl = new URL('/wake', url);
                 pingUrl.search = 'ping=' + token + '-' + i;
                 const t0 = performance.now();
 
@@ -470,11 +480,41 @@ new #[Title('Guess the Scale to Zero')] class extends Component
                     return null;
                 }
 
-                const ms = responseHeaderMs(pingUrl.href, t0);
-                best = best === null ? ms : Math.min(best, ms);
+                return responseHeaderMs(pingUrl.href, t0);
+            };
+
+            const results = (await Promise.all([0, 1, 2].map(probe))).filter((ms) => ms !== null);
+
+            return results.length > 0 ? Math.round(Math.min(...results)) : null;
+        };
+
+        // Ease the stopwatch from the cold reading down to the wake time so the
+        // latency being subtracted reads as a deliberate reveal, not a glitch.
+        const animateStopwatch = (from, to) => {
+            cancelTween();
+
+            if (Math.abs(from - to) < 1) {
+                render(to);
+                return;
             }
 
-            return Math.round(best);
+            const duration = 700;
+            const startedAt = performance.now();
+
+            const step = () => {
+                const t = Math.min(1, (performance.now() - startedAt) / duration);
+                const eased = 1 - Math.pow(1 - t, 3);
+                render(from + (to - from) * eased);
+
+                if (t < 1) {
+                    tweenRaf = requestAnimationFrame(step);
+                } else {
+                    tweenRaf = null;
+                    render(to);
+                }
+            };
+
+            tweenRaf = requestAnimationFrame(step);
         };
 
         const record = async (ms) => {
@@ -492,8 +532,7 @@ new #[Title('Guess the Scale to Zero')] class extends Component
             const latency = await measureLatency();
 
             if (latency !== null) {
-                // Snap the stopwatch to the wake time so it matches the result.
-                render(Math.max(0, coldMs - Math.min(latency, coldMs)));
+                animateStopwatch(coldMs, Math.max(0, coldMs - Math.min(latency, coldMs)));
             }
 
             $wire.recordResult(token, coldMs, latency);
@@ -502,6 +541,7 @@ new #[Title('Guess the Scale to Zero')] class extends Component
         const teardown = () => {
             stopped = true;
             cancelAnimationFrame(raf);
+            cancelTween();
             clearTimeout(timeout);
             frame.removeEventListener('load', onLoad);
             window.removeEventListener('message', onMessage);
