@@ -263,8 +263,7 @@ new #[Title('Guess the Scale to Zero')] class extends Component
                                 name="player_name"
                                 type="text"
                                 wire:model="playerName"
-                                placeholder="Taylor"
-                                class="h-11 w-full rounded-md border border-black/10 bg-white px-3 text-sm placeholder:text-slate-400 hover:border-black/20 focus:border-cloud focus:ring-[3px] focus:ring-cloud/15 focus:outline-hidden max-sm:text-base md:h-12 md:text-base xl:h-14 xl:px-4 xl:text-lg"
+                                class="h-11 w-full rounded-md border border-black/10 bg-white px-3 text-sm hover:border-black/20 focus:border-cloud focus:ring-[3px] focus:ring-cloud/15 focus:outline-hidden max-sm:text-base md:h-12 md:text-base xl:h-14 xl:px-4 xl:text-lg"
                             />
                             @error('playerName')
                                 <p class="text-sm text-red-600">{{ $message }}</p>
@@ -279,8 +278,7 @@ new #[Title('Guess the Scale to Zero')] class extends Component
                                 type="number"
                                 min="1"
                                 wire:model="guessMs"
-                                placeholder="413"
-                                class="h-11 w-full rounded-md border border-black/10 bg-white px-3 font-mono text-sm tabular-nums placeholder:text-slate-400 hover:border-black/20 focus:border-cloud focus:ring-[3px] focus:ring-cloud/15 focus:outline-hidden max-sm:text-base md:h-12 md:text-base xl:h-14 xl:px-4 xl:text-lg"
+                                class="h-11 w-full rounded-md border border-black/10 bg-white px-3 font-mono text-sm tabular-nums hover:border-black/20 focus:border-cloud focus:ring-[3px] focus:ring-cloud/15 focus:outline-hidden max-sm:text-base md:h-12 md:text-base xl:h-14 xl:px-4 xl:text-lg"
                             />
                             @error('guessMs')
                                 <p class="text-sm text-red-600">{{ $message }}</p>
@@ -342,11 +340,17 @@ new #[Title('Guess the Scale to Zero')] class extends Component
             @endif
         </div>
 
-        <div wire:ignore wire:key="wake-stage" class="min-h-0 flex-1 overflow-hidden rounded-2xl bg-white shadow-lg ring-1 ring-black/5">
+        <div wire:ignore wire:key="wake-stage" class="relative min-h-0 flex-1 overflow-hidden rounded-2xl bg-slate-50 shadow-lg ring-1 ring-black/5">
+            <div class="absolute inset-0 grid place-items-center p-6 text-center">
+                <div class="flex flex-col items-center gap-3">
+                    <span class="text-5xl">😴</span>
+                    <p class="font-medium text-slate-400 xl:text-lg">I'm sleeping…</p>
+                </div>
+            </div>
             <iframe
                 id="wake-frame"
                 title="Scale to zero preview"
-                class="size-full bg-white opacity-0 transition-opacity duration-300"
+                class="absolute inset-0 size-full bg-white opacity-0 transition-opacity duration-300"
             ></iframe>
         </div>
     </aside>
@@ -419,14 +423,6 @@ new #[Title('Guess the Scale to Zero')] class extends Component
             stopwatch.textContent = `${Math.round(ms).toLocaleString()} ms`;
         };
 
-        const tick = () => {
-            if (start !== null) {
-                render(performance.now() - start);
-            }
-
-            raf = requestAnimationFrame(tick);
-        };
-
         // Resource Timing gives us the browser's actual request/first-response
         // boundary when the target exposes Timing-Allow-Origin. Fall back to
         // the fetch promise timing for older deployed targets.
@@ -458,10 +454,8 @@ new #[Title('Guess the Scale to Zero')] class extends Component
         const stopClock = (ms) => {
             if (stopped) return null;
             stopped = true;
-            cancelAnimationFrame(raf);
             clearTimeout(timeout);
             window.removeEventListener('message', onMessage);
-            render(ms);
             return Math.round(ms);
         };
 
@@ -488,29 +482,24 @@ new #[Title('Guess the Scale to Zero')] class extends Component
             return results.length > 0 ? Math.round(Math.min(...results)) : null;
         };
 
-        // Ease the stopwatch from the cold reading down to the wake time so the
-        // latency being subtracted reads as a deliberate reveal, not a glitch.
-        const animateStopwatch = (from, to) => {
+        // Count the stopwatch up from zero and land it on the final wake time.
+        // The number only ever climbs — it never overshoots and corrects back.
+        const animateCountUp = (target) => {
             cancelTween();
 
-            if (Math.abs(from - to) < 1) {
-                render(to);
-                return;
-            }
-
-            const duration = 700;
+            const duration = Math.min(1100, Math.max(450, target));
             const startedAt = performance.now();
 
             const step = () => {
                 const t = Math.min(1, (performance.now() - startedAt) / duration);
                 const eased = 1 - Math.pow(1 - t, 3);
-                render(from + (to - from) * eased);
+                render(target * eased);
 
                 if (t < 1) {
                     tweenRaf = requestAnimationFrame(step);
                 } else {
                     tweenRaf = null;
-                    render(to);
+                    render(target);
                 }
             };
 
@@ -530,10 +519,9 @@ new #[Title('Guess the Scale to Zero')] class extends Component
             // steady-state request cost. Measuring a warm baseline straight
             // after lets the server subtract it, leaving just the wake time.
             const latency = await measureLatency();
+            const wakeMs = latency !== null ? Math.max(0, coldMs - Math.min(latency, coldMs)) : coldMs;
 
-            if (latency !== null) {
-                animateStopwatch(coldMs, Math.max(0, coldMs - Math.min(latency, coldMs)));
-            }
+            animateCountUp(wakeMs);
 
             $wire.recordResult(token, coldMs, latency);
         };
@@ -580,8 +568,6 @@ new #[Title('Guess the Scale to Zero')] class extends Component
 
         render(0);
         start = performance.now();
-
-        raf = requestAnimationFrame(tick);
 
         // Primary clock stop: this HEAD probe is the first request to the
         // sleeping app and resolves when response headers arrive.
