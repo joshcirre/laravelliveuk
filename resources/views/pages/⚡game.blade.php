@@ -265,7 +265,7 @@ new #[Title('Guess the Scale to Zero')] class extends Component
                         New guess
                     </button>
                     <p class="text-center text-xs text-slate-400 max-lg:hidden md:text-sm">Resetting for the next player in 10 seconds…</p>
-                    <p class="text-center text-xs text-slate-400 md:text-sm lg:hidden">Compare with your friends, then pass the phone on!</p>
+                    <p class="text-center text-xs text-slate-400 md:text-sm lg:hidden">How'd you do? Find your name on the leaderboard.</p>
                 @else
                     <form wire:submit="startRound" class="grid gap-4 xl:grid-cols-2">
                         <div class="flex flex-col gap-1.5">
