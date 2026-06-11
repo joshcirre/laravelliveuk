@@ -231,7 +231,8 @@ new #[Title('Guess the Scale to Zero')] class extends Component
                 <div id="wake-stopwatch" class="rounded-full bg-white px-6 py-2.5 font-mono text-4xl font-semibold tracking-tight tabular-nums shadow-md ring-1 ring-black/5 md:px-8 md:py-3 md:text-5xl xl:text-6xl">0 ms</div>
             </div>
 
-            <div class="w-full rounded-3xl bg-white/60 p-1.5 shadow-2xl ring-1 ring-black/5 backdrop-blur-sm">
+            {{-- Backdrop blur is too heavy for phone GPUs while typing, so it's desktop-only --}}
+            <div class="w-full rounded-3xl bg-white/60 p-1.5 shadow-2xl ring-1 ring-black/5 lg:backdrop-blur-sm">
                 <div class="flex flex-col gap-5 rounded-2xl bg-white p-6 shadow-xs ring-1 ring-black/5 md:gap-6 md:p-8 xl:p-10">
                 <div class="flex flex-col gap-2.5">
                     <h1 class="text-2xl font-semibold tracking-tight text-balance md:text-3xl xl:text-5xl">Guess the <span class="font-serif italic">scale to zero</span> 💤</h1>
@@ -254,15 +255,17 @@ new #[Title('Guess the Scale to Zero')] class extends Component
                         @endif
                     </div>
 
+                    {{-- Phones are one guess per player, so only the shared booth screens offer a reset --}}
                     <button
                         type="button"
                         wire:click="newGuess"
                         x-on:click="window.cancelGuessReset?.(); window.resetWakeStage?.()"
-                        class="h-11 rounded-md bg-cloud px-4 text-sm font-medium text-white transition-colors hover:bg-cloud/90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cloud md:h-12 md:text-base xl:h-14 xl:text-lg"
+                        class="h-11 rounded-md bg-cloud px-4 text-sm font-medium text-white transition-colors max-lg:hidden hover:bg-cloud/90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cloud md:h-12 md:text-base xl:h-14 xl:text-lg"
                     >
                         New guess
                     </button>
-                    <p class="text-center text-xs text-slate-400 md:text-sm">Resetting for the next player in 10 seconds…</p>
+                    <p class="text-center text-xs text-slate-400 max-lg:hidden md:text-sm">Resetting for the next player in 10 seconds…</p>
+                    <p class="text-center text-xs text-slate-400 md:text-sm lg:hidden">Compare with your friends, then pass the phone on!</p>
                 @else
                     <form wire:submit="startRound" class="grid gap-4 xl:grid-cols-2">
                         <div class="flex flex-col gap-1.5">
@@ -367,6 +370,16 @@ new #[Title('Guess the Scale to Zero')] class extends Component
     </aside>
 </div>
 
+@assets
+<style>
+    /* Keep the blank iframe out of the compositor entirely — a full-screen
+       opacity-0 layer still costs paint time on phone GPUs while typing. */
+    #wake-frame.opacity-0 {
+        visibility: hidden;
+    }
+</style>
+@endassets
+
 <script>
     const frame = document.getElementById('wake-frame');
     const stopwatch = document.getElementById('wake-stopwatch');
@@ -398,9 +411,16 @@ new #[Title('Guess the Scale to Zero')] class extends Component
         frame.src = 'about:blank';
     };
 
-    // After a result is shown, reset to a blank form for the next player.
+    // After a result is shown, reset to a blank form for the next player —
+    // but only on shared booth screens. Phones keep the result up, since each
+    // player gets one guess and compares with their group.
     $wire.on('round-complete', () => {
         window.cancelGuessReset();
+
+        if (! window.matchMedia('(min-width: 64rem)').matches) {
+            return;
+        }
+
         resetTimer = setTimeout(() => {
             resetTimer = null;
             window.resetWakeStage();
