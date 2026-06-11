@@ -10,6 +10,9 @@ beforeEach(function () {
     Cache::flush();
 
     config()->set('game.wake_cooldown', 90);
+
+    // Freeze the clock so a second ticking mid-test can't skew the countdown.
+    $this->freezeTime();
 });
 
 it('treats an untouched environment as ready', function () {

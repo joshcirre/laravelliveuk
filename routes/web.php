@@ -12,3 +12,4 @@ Route::match(['GET', 'HEAD'], '/wake', fn () => response()->noContent()->withHea
 ]))->withoutMiddleware('web')->name('wake');
 
 Route::livewire('/', 'pages::game')->name('home');
+Route::livewire('/board', 'pages::board')->name('board');

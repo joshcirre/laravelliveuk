@@ -326,3 +326,13 @@ it('shows the closest guesses on the leaderboard', function () {
     Livewire::test('pages::game')
         ->assertSeeInOrder(['Closest', 'Middle', 'Furthest']);
 });
+
+it('puts the most recent win first when guesses tie', function () {
+    fakeStatuses('running');
+
+    Round::factory()->create(['player_name' => 'Earlier', 'delta_ms' => 5, 'created_at' => now()->subMinutes(10)]);
+    Round::factory()->create(['player_name' => 'Latest', 'delta_ms' => 5, 'created_at' => now()]);
+
+    Livewire::test('pages::game')
+        ->assertSeeInOrder(['Latest', 'Earlier']);
+});

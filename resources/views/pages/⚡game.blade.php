@@ -20,7 +20,7 @@ new #[Title('Guess the Scale to Zero')] class extends Component
 
     public ?string $activeEnvId = null;
 
-    /** @var array{player_name: string, target_name: string, guess_ms: int, actual_ms: int, cold_ms: int|null, latency_ms: int|null, delta_ms: int}|null */
+    /** @var array{player_name: string, target_name: string, guess_ms: int, actual_ms: int, cold_ms: int|null, latency_ms: int|null, delta_ms: int, verdict: string}|null */
     public ?array $lastResult = null;
 
     public ?string $notice = null;
@@ -154,7 +154,10 @@ new #[Title('Guess the Scale to Zero')] class extends Component
             'delta_ms' => abs($this->guessMs - $wakeMs),
         ]);
 
-        $this->lastResult = $round->only(['player_name', 'target_name', 'guess_ms', 'actual_ms', 'cold_ms', 'latency_ms', 'delta_ms']);
+        $this->lastResult = [
+            ...$round->only(['player_name', 'target_name', 'guess_ms', 'actual_ms', 'cold_ms', 'latency_ms', 'delta_ms']),
+            'verdict' => $round->verdict,
+        ];
         $this->finishRound();
 
         $this->dispatch('round-complete');
@@ -203,6 +206,20 @@ new #[Title('Guess the Scale to Zero')] class extends Component
     {{-- Full-bleed dot-grid backdrop --}}
     <div class="absolute inset-0 bg-[radial-gradient(var(--color-slate-200)_1px,transparent_1px)] [background-size:8px_8px]"></div>
 
+    {{-- The waking app fills the whole backdrop, so phones see it behind the card --}}
+    <div wire:ignore wire:key="wake-stage" class="absolute inset-0 z-0">
+        <div class="pointer-events-none absolute inset-x-0 bottom-4 flex justify-center lg:bottom-6">
+            <p class="rounded-full bg-white px-4 py-2 text-sm font-medium text-slate-400 shadow-xs ring-1 ring-black/5 md:text-base">😴 I'm sleeping…</p>
+        </div>
+        <iframe
+            id="wake-frame"
+            title="Scale to zero preview"
+            class="peer absolute inset-0 size-full bg-white opacity-0 transition-opacity duration-300"
+        ></iframe>
+        {{-- Soft scrim so the woken page reads as a backdrop, not the focus --}}
+        <div class="pointer-events-none absolute inset-0 bg-white/40 transition-opacity duration-300 peer-[.opacity-0]:opacity-0"></div>
+    </div>
+
     <div class="pointer-events-none absolute bottom-6 left-6 z-10 max-lg:hidden">
         <p class="rounded-full bg-white px-3 py-1.5 font-mono text-xs tracking-wide text-slate-500 uppercase shadow-xs ring-1 ring-black/5">Powered by Laravel Cloud</p>
     </div>
@@ -228,16 +245,8 @@ new #[Title('Guess the Scale to Zero')] class extends Component
                 @endif
 
                 @if ($lastResult)
-                    @php
-                        $verdict = match (true) {
-                            $lastResult['delta_ms'] <= 50 => '🎯 Unbelievable!',
-                            $lastResult['delta_ms'] <= 250 => '🔥 So close!',
-                            $lastResult['delta_ms'] <= 1000 => '👏 Not bad!',
-                            default => '🐢 Better luck next time!',
-                        };
-                    @endphp
                     <div wire:key="round-result" class="flex flex-col gap-2 rounded-xl bg-cloud/4 px-4 py-3.5 ring-1 ring-cloud/15 md:px-5 md:py-4">
-                        <p class="text-sm font-medium text-cloud md:text-base">{{ $verdict }}</p>
+                        <p class="text-sm font-medium text-cloud md:text-base">{{ $lastResult['verdict'] }}</p>
                         <p class="font-semibold tracking-tight text-balance md:text-lg xl:text-xl">Laravel Cloud woke from sleep in {{ number_format($lastResult['actual_ms']) }} ms</p>
                         <p class="text-sm text-slate-500 md:text-base">{{ $lastResult['player_name'] }} guessed {{ number_format($lastResult['guess_ms']) }} ms — off by {{ number_format($lastResult['delta_ms']) }} ms.</p>
                         @if (($lastResult['cold_ms'] ?? null) !== null && ($lastResult['latency_ms'] ?? null) !== null)
@@ -336,9 +345,9 @@ new #[Title('Guess the Scale to Zero')] class extends Component
         </div>
     </div>
 
-    {{-- Right column: leaderboard on top, the waking app preview below it --}}
-    <aside class="absolute top-6 right-6 bottom-6 z-10 hidden w-80 flex-col gap-6 lg:flex xl:top-8 xl:right-8 xl:bottom-8 xl:w-96 xl:gap-8">
-        <div class="overflow-y-auto rounded-2xl bg-white/85 p-6 shadow-lg ring-1 ring-black/5 backdrop-blur-md xl:p-7">
+    {{-- Right column: the leaderboard, desktop only — phones play, the booth TV shows /board --}}
+    <aside class="absolute top-6 right-6 z-10 hidden max-h-[calc(100%-3rem)] w-80 lg:block xl:top-8 xl:right-8 xl:max-h-[calc(100%-4rem)] xl:w-96">
+        <div class="max-h-full overflow-y-auto rounded-2xl bg-white/85 p-6 shadow-lg ring-1 ring-black/5 backdrop-blur-md xl:p-7">
             <h2 class="font-mono text-xs font-medium tracking-wide text-slate-400 uppercase xl:text-sm">Leaderboard</h2>
 
             @if ($this->leaderboard->isEmpty())
@@ -354,20 +363,6 @@ new #[Title('Guess the Scale to Zero')] class extends Component
                     @endforeach
                 </ol>
             @endif
-        </div>
-
-        <div wire:ignore wire:key="wake-stage" class="relative min-h-0 flex-1 overflow-hidden rounded-2xl bg-slate-50 shadow-lg ring-1 ring-black/5">
-            <div class="absolute inset-0 grid place-items-center p-6 text-center">
-                <div class="flex flex-col items-center gap-3">
-                    <span class="text-5xl">😴</span>
-                    <p class="font-medium text-slate-400 xl:text-lg">I'm sleeping…</p>
-                </div>
-            </div>
-            <iframe
-                id="wake-frame"
-                title="Scale to zero preview"
-                class="absolute inset-0 size-full bg-white opacity-0 transition-opacity duration-300"
-            ></iframe>
         </div>
     </aside>
 </div>
