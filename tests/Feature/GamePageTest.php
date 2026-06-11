@@ -148,6 +148,19 @@ it('blocks a round when no app is playable', function () {
     expect(Round::count())->toBe(0);
 });
 
+it('disables the wake button while every app is recovering', function () {
+    fakeStatuses('running');
+
+    expect(Livewire::test('pages::game')->html())
+        ->not->toMatch('/type="submit"\s+disabled/');
+
+    app(WakeTracker::class)->markWoken('env-1');
+    app(WakeTracker::class)->markWoken('env-2');
+
+    expect(Livewire::test('pages::game')->html())
+        ->toMatch('/type="submit"\s+disabled/');
+});
+
 it('puts the chosen app on cooldown when a round starts', function () {
     fakeStatuses('running');
 

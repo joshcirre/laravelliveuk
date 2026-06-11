@@ -296,7 +296,7 @@ new #[Title('Guess the Scale to Zero')] class extends Component
 
                         <button
                             type="submit"
-                            @disabled($roundActive)
+                            @disabled($roundActive || $this->readyCount === 0)
                             class="inline-flex h-11 items-center justify-center gap-2 rounded-md bg-cloud px-4 text-sm font-medium text-white transition-colors hover:bg-cloud/90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cloud disabled:cursor-not-allowed disabled:opacity-50 md:h-12 md:text-base xl:col-span-2 xl:h-14 xl:text-lg"
                         >
                             @if ($roundActive)
