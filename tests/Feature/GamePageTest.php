@@ -60,6 +60,12 @@ it('responds to wake probes without page content', function () {
     expect($response->headers->get('Cache-Control'))->toContain('no-store');
 });
 
+it('keeps the wake probe stateless so only the compute restore is measured', function () {
+    $response = $this->head('/wake')->assertNoContent();
+
+    expect($response->headers->getCookies())->toBeEmpty();
+});
+
 it('skips the Cloud API entirely when status checks are disabled', function () {
     config()->set('game.cloud_status_enabled', false);
 

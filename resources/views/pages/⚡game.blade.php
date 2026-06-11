@@ -288,10 +288,26 @@ new #[Title('Guess the Scale to Zero')] class extends Component
                         <button
                             type="submit"
                             @disabled($roundActive)
-                            class="h-11 rounded-md bg-cloud px-4 text-sm font-medium text-white transition-colors hover:bg-cloud/90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cloud disabled:cursor-not-allowed disabled:opacity-50 md:h-12 md:text-base xl:col-span-2 xl:h-14 xl:text-lg"
+                            class="inline-flex h-11 items-center justify-center gap-2 rounded-md bg-cloud px-4 text-sm font-medium text-white transition-colors hover:bg-cloud/90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cloud disabled:cursor-not-allowed disabled:opacity-50 md:h-12 md:text-base xl:col-span-2 xl:h-14 xl:text-lg"
                         >
-                            <span wire:loading.remove wire:target="startRound">Wake an app</span>
-                            <span wire:loading wire:target="startRound">Waking…</span>
+                            @if ($roundActive)
+                                {{-- The round stays active until the wake probe reports back, so the
+                                     spinner keeps going from button click until the stopwatch moves. --}}
+                                <svg class="size-4 animate-spin md:size-5" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 0 1 8-8V0C5.373 0 0 5.373 0 12h4z"></path>
+                                </svg>
+                                Waking…
+                            @else
+                                <span wire:loading.remove wire:target="startRound">Wake an app</span>
+                                <span wire:loading.inline-flex wire:target="startRound" class="items-center gap-2">
+                                    <svg class="size-4 animate-spin md:size-5" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 0 1 8-8V0C5.373 0 0 5.373 0 12h4z"></path>
+                                    </svg>
+                                    Waking…
+                                </span>
+                            @endif
                         </button>
 
                         @error('round')
