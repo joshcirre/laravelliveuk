@@ -37,7 +37,7 @@ return [
 
     'round_timeout_ms' => 30000,
 
-    'server_region' => env('GAME_SERVER_REGION', 'London'),
+    'server_region' => env('GAME_SERVER_REGION', 'Frankfurt'),
 
     /*
     |--------------------------------------------------------------------------
@@ -66,34 +66,34 @@ return [
 
     'targets' => [
         [
-            'name' => 'Laravel Live UK 1',
-            'url' => 'https://laravelliveuk-1-main-iphqld.laravel.cloud',
-            'application_id' => 'app-a1f1b87e-5af0-4b75-acfe-29d94a1eb2e2',
-            'environment_id' => 'env-a1f1b87e-6ea7-46d3-ab6c-dae952ae5465',
+            'name' => 'Laravel Live DK 1',
+            'url' => 'https://laravellivedk-1-production-vrjeop.laravel.cloud',
+            'application_id' => 'app-a27a56ed-5eca-49e5-92d3-085d25f18445',
+            'environment_id' => 'env-a27a56ef-a3ec-47cb-bfe1-695132f8a57b',
         ],
         [
-            'name' => 'Laravel Live UK 2',
-            'url' => 'https://laravelliveuk-2-main-tnhomh.laravel.cloud',
-            'application_id' => 'app-a1f1b953-32a9-4020-9180-980cac0bf028',
-            'environment_id' => 'env-a1f1b953-48cb-4dda-9866-326534b460df',
+            'name' => 'Laravel Live DK 2',
+            'url' => 'https://laravellivedk-2-production-mf18nf.laravel.cloud',
+            'application_id' => 'app-a27a5714-cb51-402d-bd66-695292b498eb',
+            'environment_id' => 'env-a27a5716-fc57-4a9b-bbbf-a21fe2ae37b7',
         ],
         [
-            'name' => 'Laravel Live UK 3',
-            'url' => 'https://laravelliveuk-3-main-hlhkqy.laravel.cloud',
-            'application_id' => 'app-a1f1ba81-2fdf-416b-8b12-c1806cc76dc7',
-            'environment_id' => 'env-a1f1ba81-4943-449c-bd2c-6aa521989ad7',
+            'name' => 'Laravel Live DK 3',
+            'url' => 'https://laravellivedk-3-production-s6dbyj.laravel.cloud',
+            'application_id' => 'app-a27a573c-0c06-4c73-89e1-f78a179d5c04',
+            'environment_id' => 'env-a27a573d-e6ac-4baf-ba79-d47649c0c4f9',
         ],
         [
-            'name' => 'Laravel Live UK 4',
-            'url' => 'https://laravelliveuk-4-main-cdqava.laravel.cloud',
-            'application_id' => 'app-a1f1bbf4-2396-4588-b647-a40494c6eafa',
-            'environment_id' => 'env-a1f1bbf4-3936-4b76-834d-ecb77f3bdc08',
+            'name' => 'Laravel Live DK 4',
+            'url' => 'https://laravellivedk-4-production-i4vbvs.laravel.cloud',
+            'application_id' => 'app-a27a5793-6401-413e-9217-cb9c0a0ff954',
+            'environment_id' => 'env-a27a5795-2afa-48e6-b56a-c2b90b441c05',
         ],
         [
-            'name' => 'Laravel Live UK 5',
-            'url' => 'https://laravelliveuk-5-main-2jnctj.laravel.cloud',
-            'application_id' => 'app-a1f1bcd3-0d6a-4558-9a5e-a00ec63597e1',
-            'environment_id' => 'env-a1f1bcd3-24d3-4297-85ce-0b1a2847fa71',
+            'name' => 'Laravel Live DK 5',
+            'url' => 'https://laravellivedk-5-production-vu4gqx.laravel.cloud',
+            'application_id' => 'app-a27a57b3-f77d-4935-b90a-f14194c96fad',
+            'environment_id' => 'env-a27a57b5-f565-474a-8f47-6dfa260c0e8f',
         ],
     ],
 
