@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\AttendeeCsvController;
 use Illuminate\Support\Facades\Route;
 
 // The wake probe must measure only the compute restore, so it skips the web
@@ -13,3 +14,11 @@ Route::match(['GET', 'HEAD'], '/wake', fn () => response()->noContent()->withHea
 
 Route::livewire('/', 'pages::game')->name('home');
 Route::livewire('/board', 'pages::board')->name('board');
+
+Route::livewire('/organizers/attendees', 'pages::attendees')
+    ->middleware('signed')
+    ->name('attendees.index');
+
+Route::get('/organizers/attendees.csv', AttendeeCsvController::class)
+    ->middleware('signed')
+    ->name('attendees.csv');

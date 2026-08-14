@@ -9,8 +9,9 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
-#[Fillable(['player_name', 'target_name', 'target_url', 'guess_ms', 'actual_ms', 'cold_ms', 'latency_ms', 'delta_ms'])]
+#[Fillable(['attendee_id', 'player_name', 'target_name', 'target_url', 'guess_ms', 'actual_ms', 'cold_ms', 'latency_ms', 'delta_ms'])]
 class Round extends Model
 {
     /** @use HasFactory<RoundFactory> */
@@ -45,6 +46,11 @@ class Round extends Model
             $this->delta_ms <= 1000 => '👏 Not bad!',
             default => '🐢 Better luck next time!',
         });
+    }
+
+    public function attendee(): BelongsTo
+    {
+        return $this->belongsTo(Attendee::class);
     }
 
     /**

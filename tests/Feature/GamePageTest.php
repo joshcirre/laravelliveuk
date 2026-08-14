@@ -1,9 +1,11 @@
 <?php
 
+use App\Models\Attendee;
 use App\Models\Round;
 use App\Services\WakeTracker;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
+use Livewire\Features\SupportTesting\Testable;
 use Livewire\Livewire;
 
 beforeEach(function () {
@@ -41,6 +43,16 @@ function fakeStatuses(string $appOneStatus, string $appTwoStatus = 'running'): v
     ]);
 }
 
+function registeredGame(string $name = 'Josh', string $email = 'josh@example.com'): Testable
+{
+    return Livewire::test('pages::game')
+        ->set('playerName', $name)
+        ->set('playerEmail', $email)
+        ->call('register')
+        ->assertHasNoErrors()
+        ->assertSet('attendeeId', fn (?int $attendeeId): bool => $attendeeId !== null);
+}
+
 it('renders the game page with app readiness', function () {
     fakeStatuses('running');
 
@@ -48,7 +60,49 @@ it('renders the game page with app readiness', function () {
         ->assertSuccessful()
         ->assertSee('Guess the')
         ->assertSee('scale to zero')
+        ->assertSee('type="email"', false)
+        ->assertSee('inputmode="email"', false)
+        ->assertSee('autocomplete="email"', false)
         ->assertSee('ready to wake');
+});
+
+it('saves a normalized attendee before showing the guess form', function () {
+    fakeStatuses('running');
+
+    Livewire::test('pages::game')
+        ->set('playerName', '  Josh   Cirre  ')
+        ->set('playerEmail', 'JOSH@EXAMPLE.COM ')
+        ->call('register')
+        ->assertHasNoErrors()
+        ->assertSee("You're in", false)
+        ->assertSee('Your guess (ms)')
+        ->assertDontSee('Your email');
+
+    expect(Attendee::sole())
+        ->name->toBe('Josh Cirre')
+        ->email->toBe('josh@example.com');
+});
+
+it('deduplicates attendees by normalized email', function () {
+    fakeStatuses('running');
+
+    registeredGame('Josh', 'Josh@Example.com');
+    registeredGame('Joshua', 'josh@example.com');
+
+    expect(Attendee::query()->count())->toBe(1)
+        ->and(Attendee::sole()->name)->toBe('Joshua');
+});
+
+it('validates registration details before saving them', function () {
+    fakeStatuses('running');
+
+    Livewire::test('pages::game')
+        ->set('playerEmail', 'not-an-email')
+        ->call('register')
+        ->assertHasErrors(['playerName', 'playerEmail'])
+        ->assertSet('attendeeId', null);
+
+    expect(Attendee::query()->count())->toBe(0);
 });
 
 it('responds to wake probes without page content', function () {
@@ -70,8 +124,7 @@ it('skips the Cloud API entirely when status checks are disabled', function () {
     config()->set('game.cloud_status_enabled', false);
 
     // No Http::fake() here — preventStrayRequests() fails the test if any request fires.
-    Livewire::test('pages::game')
-        ->set('playerName', 'Josh')
+    registeredGame()
         ->set('guessMs', 1200)
         ->call('startRound')
         ->assertHasNoErrors()
@@ -82,8 +135,7 @@ it('skips the Cloud API entirely when status checks are disabled', function () {
 it('starts a round with the first available app', function () {
     fakeStatuses('running');
 
-    Livewire::test('pages::game')
-        ->set('playerName', 'Josh')
+    registeredGame()
         ->set('guessMs', 1200)
         ->call('startRound')
         ->assertHasNoErrors()
@@ -97,8 +149,7 @@ it('auto-selects the next app when the first is cooling down', function () {
 
     app(WakeTracker::class)->markWoken('env-1');
 
-    Livewire::test('pages::game')
-        ->set('playerName', 'Josh')
+    registeredGame()
         ->set('guessMs', 1200)
         ->call('startRound')
         ->assertHasNoErrors()
@@ -109,8 +160,7 @@ it('auto-selects the next app when the first is cooling down', function () {
 it('auto-selects around an app that is deploying or stopped', function (string $status) {
     fakeStatuses($status);
 
-    Livewire::test('pages::game')
-        ->set('playerName', 'Josh')
+    registeredGame()
         ->set('guessMs', 1200)
         ->call('startRound')
         ->assertHasNoErrors()
@@ -124,8 +174,7 @@ it('blocks a round when every app is cooling down', function () {
     app(WakeTracker::class)->markWoken('env-1');
     app(WakeTracker::class)->markWoken('env-2');
 
-    Livewire::test('pages::game')
-        ->set('playerName', 'Josh')
+    registeredGame()
         ->set('guessMs', 1200)
         ->call('startRound')
         ->assertHasErrors('round')
@@ -138,8 +187,7 @@ it('blocks a round when every app is cooling down', function () {
 it('blocks a round when no app is playable', function () {
     fakeStatuses('deploying', 'stopped');
 
-    Livewire::test('pages::game')
-        ->set('playerName', 'Josh')
+    registeredGame()
         ->set('guessMs', 1200)
         ->call('startRound')
         ->assertHasErrors('round')
@@ -151,21 +199,20 @@ it('blocks a round when no app is playable', function () {
 it('disables the wake button while every app is recovering', function () {
     fakeStatuses('running');
 
-    expect(Livewire::test('pages::game')->html())
+    expect(registeredGame()->html())
         ->not->toMatch('/type="submit"\s+disabled/');
 
     app(WakeTracker::class)->markWoken('env-1');
     app(WakeTracker::class)->markWoken('env-2');
 
-    expect(Livewire::test('pages::game')->html())
+    expect(registeredGame()->html())
         ->toMatch('/type="submit"\s+disabled/');
 });
 
 it('puts the chosen app on cooldown when a round starts', function () {
     fakeStatuses('running');
 
-    Livewire::test('pages::game')
-        ->set('playerName', 'Josh')
+    registeredGame()
         ->set('guessMs', 1200)
         ->call('startRound')
         ->assertHasNoErrors();
@@ -173,20 +220,28 @@ it('puts the chosen app on cooldown when a round starts', function () {
     expect(app(WakeTracker::class)->isReady('env-1'))->toBeFalse();
 });
 
-it('validates the player name and guess before starting', function () {
+it('requires registration before starting a round', function () {
     fakeStatuses('running');
 
     Livewire::test('pages::game')
         ->call('startRound')
-        ->assertHasErrors(['playerName', 'guessMs'])
+        ->assertHasErrors('registration')
+        ->assertNotDispatched('round-started');
+});
+
+it('validates the guess after registration', function () {
+    fakeStatuses('running');
+
+    registeredGame()
+        ->call('startRound')
+        ->assertHasErrors('guessMs')
         ->assertNotDispatched('round-started');
 });
 
 it('ignores a second start while a round is active', function () {
     fakeStatuses('running');
 
-    $component = Livewire::test('pages::game')
-        ->set('playerName', 'Josh')
+    $component = registeredGame()
         ->set('guessMs', 1200)
         ->call('startRound');
 
@@ -200,8 +255,7 @@ it('ignores a second start while a round is active', function () {
 it('records a finished round with the computed delta', function () {
     fakeStatuses('running');
 
-    $component = Livewire::test('pages::game')
-        ->set('playerName', 'Josh')
+    $component = registeredGame()
         ->set('guessMs', 1200)
         ->call('startRound');
 
@@ -218,6 +272,7 @@ it('records a finished round with the computed delta', function () {
     $round = Round::sole();
 
     expect($round)
+        ->attendee_id->toBe(Attendee::sole()->id)
         ->player_name->toBe('Josh')
         ->target_name->toBe('App One')
         ->target_url->toBe('https://app-one.test')
@@ -231,8 +286,7 @@ it('records a finished round with the computed delta', function () {
 it('dispatches round-complete and resets to a blank form on new guess', function () {
     fakeStatuses('running');
 
-    $component = Livewire::test('pages::game')
-        ->set('playerName', 'Josh')
+    $component = registeredGame()
         ->set('guessMs', 1200)
         ->call('startRound');
 
@@ -242,16 +296,17 @@ it('dispatches round-complete and resets to a blank form on new guess', function
     $component->call('newGuess')
         ->assertSet('lastResult', null)
         ->assertSet('playerName', '')
+        ->assertSet('playerEmail', '')
+        ->assertSet('attendeeId', null)
         ->assertSet('guessMs', null)
-        ->assertSee('Wake an app')
+        ->assertSee('Continue to your guess')
         ->assertDontSee('woke from sleep');
 });
 
 it('records a round without latency when the measurement fails', function () {
     fakeStatuses('running');
 
-    $component = Livewire::test('pages::game')
-        ->set('playerName', 'Josh')
+    $component = registeredGame()
         ->set('guessMs', 1200)
         ->call('startRound');
 
@@ -268,8 +323,7 @@ it('records a round without latency when the measurement fails', function () {
 it('caps a reported latency at the actual wake time', function () {
     fakeStatuses('running');
 
-    $component = Livewire::test('pages::game')
-        ->set('playerName', 'Josh')
+    $component = registeredGame()
         ->set('guessMs', 1200)
         ->call('startRound');
 
@@ -281,8 +335,7 @@ it('caps a reported latency at the actual wake time', function () {
 it('does not reveal which app was used in the result', function () {
     fakeStatuses('running');
 
-    $component = Livewire::test('pages::game')
-        ->set('playerName', 'Josh')
+    $component = registeredGame()
         ->set('guessMs', 1200)
         ->call('startRound');
 
@@ -293,8 +346,7 @@ it('does not reveal which app was used in the result', function () {
 it('ignores results with a stale token', function () {
     fakeStatuses('running');
 
-    Livewire::test('pages::game')
-        ->set('playerName', 'Josh')
+    registeredGame()
         ->set('guessMs', 1200)
         ->call('startRound')
         ->call('recordResult', 1, 1500)
@@ -315,8 +367,7 @@ it('ignores results when no round is active', function () {
 it('voids a round on timeout without persisting anything', function () {
     fakeStatuses('running');
 
-    $component = Livewire::test('pages::game')
-        ->set('playerName', 'Josh')
+    $component = registeredGame()
         ->set('guessMs', 1200)
         ->call('startRound');
 

@@ -1,16 +1,24 @@
 <?php
 
+use App\Models\Attendee;
 use App\Models\Round;
 use App\Services\LaravelCloud;
 use App\Services\WakeTracker;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Str;
 use Livewire\Attributes\Computed;
+use Livewire\Attributes\Locked;
 use Livewire\Attributes\Title;
 use Livewire\Component;
 
 new #[Title('Guess the Scale to Zero')] class extends Component
 {
     public string $playerName = '';
+
+    public string $playerEmail = '';
+
+    #[Locked]
+    public ?int $attendeeId = null;
 
     public ?int $guessMs = null;
 
@@ -25,15 +33,19 @@ new #[Title('Guess the Scale to Zero')] class extends Component
 
     public ?string $notice = null;
 
-    /**
-     * Get the validation rules for starting a round.
-     *
-     * @return array<string, array<int, string>>
-     */
-    protected function rules(): array
+    /** @return array<string, array<int, string>> */
+    protected function registrationRules(): array
     {
         return [
             'playerName' => ['required', 'string', 'max:50'],
+            'playerEmail' => ['required', 'string', 'email:rfc', 'max:254'],
+        ];
+    }
+
+    /** @return array<string, array<int, string>> */
+    protected function guessRules(): array
+    {
+        return [
             'guessMs' => ['required', 'integer', 'min:1', 'max:120000'],
         ];
     }
@@ -87,13 +99,47 @@ new #[Title('Guess the Scale to Zero')] class extends Component
         return Round::closest()->limit(10)->get();
     }
 
+    public function register(): void
+    {
+        $this->playerName = Str::squish($this->playerName);
+        $this->playerEmail = Str::lower(trim($this->playerEmail));
+
+        $validated = $this->validate($this->registrationRules());
+
+        $attendee = Attendee::query()->updateOrCreate(
+            ['email' => $validated['playerEmail']],
+            ['name' => $validated['playerName']],
+        );
+
+        $this->playerName = $attendee->name;
+        $this->playerEmail = $attendee->email;
+        $this->attendeeId = $attendee->id;
+        $this->resetErrorBag();
+    }
+
     public function startRound(): void
     {
         if ($this->roundActive) {
             return;
         }
 
-        $this->validate();
+        if ($this->attendeeId === null) {
+            $this->addError('registration', 'Enter your name and email before making a guess.');
+
+            return;
+        }
+
+        $attendee = Attendee::query()->find($this->attendeeId);
+
+        if ($attendee === null) {
+            $this->reset(['attendeeId', 'playerName', 'playerEmail']);
+            $this->addError('registration', 'Please enter your details again.');
+
+            return;
+        }
+
+        $this->validate($this->guessRules());
+        $this->playerName = $attendee->name;
 
         $target = $this->targets->firstWhere('playable', true);
 
@@ -144,6 +190,7 @@ new #[Title('Guess the Scale to Zero')] class extends Component
         $wakeMs = $baselineMs !== null ? $coldMs - $baselineMs : $coldMs;
 
         $round = Round::create([
+            'attendee_id' => $this->attendeeId,
             'player_name' => $this->playerName,
             'target_name' => $target['name'],
             'target_url' => $target['url'],
@@ -168,7 +215,7 @@ new #[Title('Guess the Scale to Zero')] class extends Component
      */
     public function newGuess(): void
     {
-        $this->reset(['lastResult', 'playerName', 'guessMs', 'notice']);
+        $this->reset(['lastResult', 'playerName', 'playerEmail', 'attendeeId', 'guessMs', 'notice']);
         $this->resetErrorBag();
     }
 
@@ -237,7 +284,11 @@ new #[Title('Guess the Scale to Zero')] class extends Component
                 <div class="flex flex-col gap-2.5">
                     <h1 class="text-2xl font-semibold tracking-tight text-balance md:text-3xl xl:text-5xl">Guess the <span class="font-serif italic">scale to zero</span> 💤</h1>
                     @unless ($lastResult)
-                        <p class="text-sm text-pretty text-slate-500 md:text-base xl:text-lg">A Laravel Cloud app has scaled to zero. Guess how many milliseconds it takes to wake — we subtract network and steady-state latency so it's purely the cold start. Closest guess wins.</p>
+                        @if ($attendeeId === null)
+                            <p class="text-sm text-pretty text-slate-500 md:text-base xl:text-lg">Enter your details to play, then guess how many milliseconds a Laravel Cloud app takes to wake. Closest guess wins.</p>
+                        @else
+                            <p class="text-sm text-pretty text-slate-500 md:text-base xl:text-lg">A Laravel Cloud app has scaled to zero. Make your guess — we subtract network and steady-state latency so it's purely the cold start.</p>
+                        @endif
                     @endunless
                 </div>
 
@@ -266,14 +317,17 @@ new #[Title('Guess the Scale to Zero')] class extends Component
                     </button>
                     <p class="text-center text-xs text-slate-400 max-lg:hidden md:text-sm">Resetting for the next player in 10 seconds…</p>
                     <p class="text-center text-xs text-slate-400 md:text-sm lg:hidden">How'd you do? Find your name on the leaderboard.</p>
-                @else
-                    <form wire:submit="startRound" class="grid gap-4 xl:grid-cols-2">
+                @elseif ($attendeeId === null)
+                    <form wire:submit="register" class="grid gap-4 xl:grid-cols-2">
                         <div class="flex flex-col gap-1.5">
                             <label for="player-name" class="text-sm font-medium text-slate-700 xl:text-base">Your name</label>
                             <input
                                 id="player-name"
                                 name="player_name"
                                 type="text"
+                                autocomplete="name"
+                                autocapitalize="words"
+                                enterkeyhint="next"
                                 wire:model="playerName"
                                 class="h-11 w-full rounded-md border border-black/10 bg-white px-3 text-sm hover:border-black/20 focus:border-cloud focus:ring-[3px] focus:ring-cloud/15 focus:outline-hidden max-sm:text-base md:h-12 md:text-base xl:h-14 xl:px-4 xl:text-lg"
                             />
@@ -283,12 +337,61 @@ new #[Title('Guess the Scale to Zero')] class extends Component
                         </div>
 
                         <div class="flex flex-col gap-1.5">
+                            <label for="player-email" class="text-sm font-medium text-slate-700 xl:text-base">Your email</label>
+                            <input
+                                id="player-email"
+                                name="player_email"
+                                type="email"
+                                inputmode="email"
+                                autocomplete="email"
+                                autocapitalize="none"
+                                autocorrect="off"
+                                spellcheck="false"
+                                enterkeyhint="go"
+                                wire:model="playerEmail"
+                                class="h-11 w-full rounded-md border border-black/10 bg-white px-3 text-sm hover:border-black/20 focus:border-cloud focus:ring-[3px] focus:ring-cloud/15 focus:outline-hidden max-sm:text-base md:h-12 md:text-base xl:h-14 xl:px-4 xl:text-lg"
+                            />
+                            @error('playerEmail')
+                                <p class="text-sm text-red-600">{{ $message }}</p>
+                            @enderror
+                        </div>
+
+                        <button
+                            type="submit"
+                            wire:loading.attr="disabled"
+                            wire:target="register"
+                            class="inline-flex h-11 items-center justify-center rounded-md bg-cloud px-4 text-sm font-medium text-white transition-colors hover:bg-cloud/90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cloud disabled:cursor-wait disabled:opacity-60 md:h-12 md:text-base xl:col-span-2 xl:h-14 xl:text-lg"
+                        >
+                            <span wire:loading.remove wire:target="register">Continue to your guess</span>
+                            <span wire:loading wire:target="register">Saving…</span>
+                        </button>
+
+                        <p class="text-xs leading-relaxed text-pretty text-slate-400 xl:col-span-2 xl:text-sm">By continuing, you agree that the event organizers may use these details to follow up with you after the event.</p>
+
+                        @error('registration')
+                            <p class="text-sm text-red-600 xl:col-span-2">{{ $message }}</p>
+                        @enderror
+                    </form>
+                @else
+                    <form wire:submit="startRound" class="grid gap-4">
+                        <div class="flex items-center justify-between gap-4 rounded-xl bg-cloud/4 px-4 py-3 ring-1 ring-cloud/15">
+                            <div class="min-w-0">
+                                <p class="text-xs font-medium tracking-wide text-cloud uppercase">You're in</p>
+                                <p class="truncate text-sm font-medium text-slate-700 md:text-base">{{ $playerName }}</p>
+                            </div>
+                            <span class="shrink-0 text-lg" aria-hidden="true">✓</span>
+                        </div>
+
+                        <div class="flex flex-col gap-1.5">
                             <label for="guess-ms" class="text-sm font-medium text-slate-700 xl:text-base">Your guess (ms)</label>
                             <input
                                 id="guess-ms"
                                 name="guess_ms"
                                 type="number"
+                                inputmode="numeric"
+                                enterkeyhint="go"
                                 min="1"
+                                max="120000"
                                 wire:model="guessMs"
                                 class="h-11 w-full rounded-md border border-black/10 bg-white px-3 font-mono text-sm tabular-nums hover:border-black/20 focus:border-cloud focus:ring-[3px] focus:ring-cloud/15 focus:outline-hidden max-sm:text-base md:h-12 md:text-base xl:h-14 xl:px-4 xl:text-lg"
                             />
@@ -300,7 +403,7 @@ new #[Title('Guess the Scale to Zero')] class extends Component
                         <button
                             type="submit"
                             @disabled($roundActive || $this->readyCount === 0)
-                            class="inline-flex h-11 items-center justify-center gap-2 rounded-md bg-cloud px-4 text-sm font-medium text-white transition-colors hover:bg-cloud/90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cloud disabled:cursor-not-allowed disabled:opacity-50 md:h-12 md:text-base xl:col-span-2 xl:h-14 xl:text-lg"
+                            class="inline-flex h-11 items-center justify-center gap-2 rounded-md bg-cloud px-4 text-sm font-medium text-white transition-colors hover:bg-cloud/90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cloud disabled:cursor-not-allowed disabled:opacity-50 md:h-12 md:text-base xl:h-14 xl:text-lg"
                         >
                             @if ($roundActive)
                                 {{-- The round stays active until the wake probe reports back, so the
